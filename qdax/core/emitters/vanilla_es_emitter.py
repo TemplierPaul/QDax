@@ -14,10 +14,10 @@ import jax.numpy as jnp
 import optax
 
 # from qdax.core.containers.mapelites_repertoire import ESRepertoire
-from qdax.core.es_parts.es_utils import ESRepertoire
+from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.emitters.emitter import Emitter, EmitterState
 from qdax.types import Descriptor, ExtraScores, Fitness, Genotype, RNGKey
-
+from qdax.core.cmaes import CMAESState
 
 class NoveltyArchive(flax.struct.PyTreeNode):
     """Novelty Archive used by NS-ES.
@@ -129,6 +129,7 @@ class VanillaESConfig:
     learning_rate: float = 0.01
     l2_coefficient: float = 0.02
     novelty_nearest_neighbors: int = 10
+    actor_injection: bool = False
 
 
 class VanillaESEmitterState(EmitterState):
@@ -147,6 +148,7 @@ class VanillaESEmitterState(EmitterState):
     generation_count: int
     novelty_archive: NoveltyArchive
     random_key: RNGKey
+    metrics: ESMetrics
 
 
 class VanillaESEmitter(Emitter):
@@ -188,6 +190,12 @@ class VanillaESEmitter(Emitter):
         else:
             self._optimizer = optax.sgd(learning_rate=config.learning_rate)
 
+        # Actor injection
+        if self._config.actor_injection:
+            self._actor_injection = self._inject_actor
+        else:
+            self._actor_injection = lambda x, a, p: x
+
     @property
     def batch_size(self) -> int:
         """
@@ -227,6 +235,15 @@ class VanillaESEmitter(Emitter):
             self._total_generations, self._num_descriptors
         )
 
+        metrics = ESMetrics(
+            es_updates=0,
+            rl_updates=0,
+            evaluations=0,
+            actor_fitness=-jnp.inf,
+            center_fitness=-jnp.inf,
+            fitness=-jnp.inf,
+        )
+
         return (
             VanillaESEmitterState(
                 optimizer_state=initial_optimizer_state,
@@ -234,6 +251,7 @@ class VanillaESEmitter(Emitter):
                 generation_count=0,
                 novelty_archive=novelty_archive,
                 random_key=random_key,
+                metrics=metrics,
             ),
             random_key,
         )
@@ -264,6 +282,109 @@ class VanillaESEmitter(Emitter):
 
     @partial(
         jax.jit,
+        static_argnames=("self"),
+    )
+    def _sample(
+        self, 
+        parent: Genotype,
+        # total_sample_number: int,
+        random_key: RNGKey,
+    ) -> Tuple[Genotype, RNGKey]:
+        """Sample a batch of genotypes from the parent.
+
+        Args:
+            parent: the considered parent.
+            number: the number of genotypes to sample.
+            random_key
+
+        Returns:
+            The sampled noises and a new random_key.
+        """
+        random_key, subkey = jax.random.split(random_key)
+        total_sample_number = self._config.sample_number
+
+        sample_noise = jax.tree_map(
+            lambda x: jax.random.normal(
+                key=subkey,
+                shape=jnp.repeat(x, total_sample_number, axis=0).shape,
+            ),
+            parent,
+        )
+
+        return sample_noise, random_key
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self"),
+    )
+    def _sample_mirror(
+        self, 
+        parent: Genotype,
+        # total_sample_number: int,
+        random_key: RNGKey,
+    ) -> Tuple[Genotype, RNGKey]:
+        """
+        Sample a batch of genotypes from the parent, with a mirror noise.
+
+        Args:
+            parent: the considered parent.
+            number: the number of genotypes to sample.
+            random_key
+        
+        Returns:
+            The sampled noises and a new random_key.
+        """
+        random_key, subkey = jax.random.split(random_key)
+        total_sample_number = self._config.sample_number
+
+        sample_number = total_sample_number // 2
+        half_sample_noise = jax.tree_util.tree_map(
+            lambda x: jax.random.normal(
+                key=subkey,
+                shape=jnp.repeat(x, sample_number, axis=0).shape,
+            ),
+            parent,
+        )
+        sample_noise = jax.tree_util.tree_map(
+            lambda x: jnp.concatenate(
+                [jnp.expand_dims(x, axis=1), jnp.expand_dims(-x, axis=1)], axis=1
+            ).reshape(jnp.repeat(x, 2, axis=0).shape),
+            half_sample_noise,
+        )
+
+        return sample_noise, random_key
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self"),
+    )
+    def _inject_actor(
+        self, 
+        sample_noise: Genotype,
+        actor: Genotype,
+        parent: Genotype,
+    ) -> Genotype:
+        """
+        Replace the last genotype of the sample_noise by the actor minus the parent.
+        """
+        # Get the noise that recreates the actor
+        actor_noise = jax.tree_util.tree_map(
+            lambda x, y: (x - y)/self._config.sample_sigma,
+            actor,
+            parent,
+        )
+
+        # Replace the last one 
+        sample_noise = jax.tree_util.tree_map(
+            lambda x, y: jnp.concatenate([x[:-1], y], axis=0),
+            sample_noise,
+            actor_noise,
+        )
+
+        return sample_noise
+
+    @partial(
+        jax.jit,
         static_argnames=("self", "scores_fn"),
     )
     def _es_emitter(
@@ -272,6 +393,7 @@ class VanillaESEmitter(Emitter):
         optimizer_state: optax.OptState,
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
+        actor: Genotype=None,
     ) -> Tuple[Genotype, optax.OptState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
         the fitnesses and descriptors fo its es-samples, return its
@@ -289,7 +411,7 @@ class VanillaESEmitter(Emitter):
 
         raise NotImplementedError
 
-        return offspring, optimizer_state, random_key
+        return offspring, optimizer_state, random_key, extra_scores
 
     @partial(
         jax.jit,
@@ -332,19 +454,46 @@ class VanillaESEmitter(Emitter):
         # Define scores for es process
         def scores(fitnesses: Fitness, descriptors: Descriptor) -> jnp.ndarray:
             if self._config.nses_emitter:
-                return fitnesses
-            else:
                 return novelty_archive.novelty(
                     descriptors, self._config.novelty_nearest_neighbors
                 )
+            else:
+                return fitnesses
 
         # Run es process
-        offspring, optimizer_state, random_key = self._es_emitter(
+        offspring, optimizer_state, random_key, extra_scores = self._es_emitter(
             parent=genotypes,
             optimizer_state=emitter_state.optimizer_state,
             random_key=emitter_state.random_key,
             scores_fn=scores,
+            actor=genotypes,
         )
+
+
+        center_fitness = jnp.mean(fitnesses)
+        metrics = emitter_state.metrics.replace(
+            center_fitness=center_fitness,
+            evaluations=emitter_state.metrics.evaluations + self._config.sample_number,
+        )
+
+        if "population_fitness" in extra_scores:
+            pop_mean = jnp.mean(extra_scores["population_fitness"])
+            pop_std = jnp.std(extra_scores["population_fitness"])
+            pop_min = jnp.min(extra_scores["population_fitness"])
+            pop_max = jnp.max(extra_scores["population_fitness"]) 
+            metrics = metrics.replace(
+                pop_mean=pop_mean,
+                pop_std=pop_std,
+                pop_min=pop_min,
+                pop_max=pop_max,
+            )
+
+        # Log sigma if using cmaes
+        if isinstance(emitter_state.optimizer_state, CMAESState):
+            metrics = metrics.replace(
+                sigma=emitter_state.optimizer_state.sigma,
+            )
+
 
         return emitter_state.replace(  # type: ignore
             optimizer_state=optimizer_state,
@@ -352,4 +501,5 @@ class VanillaESEmitter(Emitter):
             novelty_archive=novelty_archive,
             generation_count=emitter_state.generation_count + 1,
             random_key=random_key,
+            metrics=metrics,
         )

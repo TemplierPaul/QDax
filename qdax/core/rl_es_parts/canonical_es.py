@@ -1,6 +1,6 @@
 from __future__ import annotations
 from qdax.core.emitters.vanilla_es_emitter import VanillaESConfig, VanillaESEmitterState, VanillaESEmitter, NoveltyArchive
-from qdax.core.es_parts.es_utils import ESRepertoire
+from qdax.core.rl_es_parts.es_utils import ESRepertoire
 
 from dataclasses import dataclass
 from functools import partial
@@ -35,6 +35,7 @@ class CanonicalESConfig(VanillaESConfig):
     sample_sigma: float = 0.02
     learning_rate: float = 0.01
     novelty_nearest_neighbors: int = 10
+    actor_injection: bool = False
 
 class CanonicalESEmitterState(EmitterState):
     """Emitter State for the ES or NSES emitter.
@@ -51,6 +52,7 @@ class CanonicalESEmitterState(EmitterState):
     generation_count: int
     novelty_archive: NoveltyArchive
     random_key: RNGKey
+    optimizer_state: optax.OptState = None # Not used by canonical ES
 
 
 class CanonicalESEmitter(VanillaESEmitter):
@@ -132,8 +134,10 @@ class CanonicalESEmitter(VanillaESEmitter):
     def _es_emitter(
         self,
         parent: Genotype,
+        optimizer_state: optax.OptState,
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
+        actor: Genotype=None,
     ) -> Tuple[Genotype, optax.OptState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
         the fitnesses and descriptors fo its es-samples, return its
@@ -152,10 +156,10 @@ class CanonicalESEmitter(VanillaESEmitter):
         random_key, subkey = jax.random.split(random_key)
 
         # Sampling mirror noise
-        total_sample_number = self._config.sample_number
+        sample_number = self._config.sample_number if not self._config.actor_injection else self._config.sample_number - 1
 
-        # Sampling non-mirror noise
-        sample_number = total_sample_number
+        # Sampling noise
+        sample_number = sample_number 
         sample_noise = jax.tree_map(
             lambda x: jax.random.normal(
                 key=subkey,
@@ -167,7 +171,7 @@ class CanonicalESEmitter(VanillaESEmitter):
 
         # Applying noise
         samples = jax.tree_map(
-            lambda x: jnp.repeat(x, total_sample_number, axis=0),
+            lambda x: jnp.repeat(x, sample_number, axis=0),
             parent,
         )
         samples = jax.tree_map(
@@ -176,10 +180,18 @@ class CanonicalESEmitter(VanillaESEmitter):
             sample_noise,
         )
 
+        if self._config.actor_injection:
+            samples = jax.tree_map(
+                lambda x: jnp.concatenate([x, actor], axis=0),
+                samples,
+            )
+
         # Evaluating samples
         fitnesses, descriptors, extra_scores, random_key = self._scoring_fn(
             samples, random_key
         )
+
+        extra_scores["population_fitness"] = fitnesses
 
         # Computing rank, with or without normalisation
         scores = scores_fn(fitnesses, descriptors)
@@ -224,7 +236,7 @@ class CanonicalESEmitter(VanillaESEmitter):
 
         offspring = optax.apply_updates(parent, gradient)
 
-        return offspring, random_key
+        return offspring, optimizer_state, random_key, extra_scores
 
     @partial(
         jax.jit,
@@ -267,14 +279,14 @@ class CanonicalESEmitter(VanillaESEmitter):
         # Define scores for es process
         def scores(fitnesses: Fitness, descriptors: Descriptor) -> jnp.ndarray:
             if self._config.nses_emitter:
-                return fitnesses
-            else:
                 return novelty_archive.novelty(
                     descriptors, self._config.novelty_nearest_neighbors
                 )
+            else:
+                return fitnesses
 
         # Run es process
-        offspring, random_key = self._es_emitter(
+        offspring, random_key, extra_scores = self._es_emitter(
             parent=genotypes,
             random_key=emitter_state.random_key,
             scores_fn=scores,

@@ -37,6 +37,8 @@ class OpenESConfig(VanillaESConfig):
     learning_rate: float = 0.01
     l2_coefficient: float = 0.02
     novelty_nearest_neighbors: int = 10
+    actor_injection: bool = False
+
 
 class OpenESEmitter(VanillaESEmitter):
     """
@@ -58,6 +60,7 @@ class OpenESEmitter(VanillaESEmitter):
         optimizer_state: optax.OptState,
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
+        actor: Genotype=None,
     ) -> Tuple[Genotype, optax.OptState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
         the fitnesses and descriptors fo its es-samples, return its
@@ -73,39 +76,24 @@ class OpenESEmitter(VanillaESEmitter):
             The approximated-gradients-generated offspring and a new random_key.
         """
 
-        random_key, subkey = jax.random.split(random_key)
-
-        # Sampling mirror noise
+        # Sampling noise
         total_sample_number = self._config.sample_number
-        if self._config.sample_mirror:
 
-            sample_number = total_sample_number // 2
-            half_sample_noise = jax.tree_util.tree_map(
-                lambda x: jax.random.normal(
-                    key=subkey,
-                    shape=jnp.repeat(x, sample_number, axis=0).shape,
-                ),
-                parent,
-            )
-            sample_noise = jax.tree_util.tree_map(
-                lambda x: jnp.concatenate(
-                    [jnp.expand_dims(x, axis=1), jnp.expand_dims(-x, axis=1)], axis=1
-                ).reshape(jnp.repeat(x, 2, axis=0).shape),
-                half_sample_noise,
-            )
-            gradient_noise = half_sample_noise
+        sample_noise, random_key = jax.lax.cond(
+            self._config.sample_mirror,
+            self._sample_mirror,
+            self._sample,
+            parent,
+            random_key,
+        )
 
-        # Sampling non-mirror noise
-        else:
-            sample_number = total_sample_number
-            sample_noise = jax.tree_map(
-                lambda x: jax.random.normal(
-                    key=subkey,
-                    shape=jnp.repeat(x, sample_number, axis=0).shape,
-                ),
-                parent,
-            )
-            gradient_noise = sample_noise
+
+        # Actor injection if needed in config and if actor is not None
+        sample_noise = self._actor_injection(
+            sample_noise,
+            actor,
+            parent,
+        )
 
         # Applying noise
         # Repeat center
@@ -124,43 +112,32 @@ class OpenESEmitter(VanillaESEmitter):
         fitnesses, descriptors, extra_scores, random_key = self._scoring_fn(
             samples, random_key
         )
+        extra_scores["population_fitness"] = fitnesses
 
-        # Computing rank, with or without normalisation
+        # Computing rank with normalisation
         scores = scores_fn(fitnesses, descriptors)
 
-        if self._config.sample_rank_norm:
-            ranking_indices = jnp.argsort(scores, axis=0) # Lowest fitness has rank 0
-            ranks = jnp.argsort(ranking_indices, axis=0) 
-            weights = (ranks / (total_sample_number - 1)) - 0.5
 
-        else:
-            weights = scores
-
-        # Reshaping rank to match shape of genotype_noise
-        if self._config.sample_mirror:
-            weights = jnp.reshape(weights, (sample_number, 2))
-            weights = jnp.apply_along_axis(lambda rank: rank[0] - rank[1], 1, weights)
+        ranking_indices = jnp.argsort(scores, axis=0) # Lowest fitness has rank 0
+        ranks = jnp.argsort(ranking_indices, axis=0) 
+        weights = (ranks / (total_sample_number - 1)) - 0.5
 
         weights = jax.tree_map(
             lambda x: jnp.reshape(
                 jnp.repeat(weights.ravel(), x[0].ravel().shape[0], axis=0), x.shape
             ),
-            gradient_noise,
+            sample_noise,
         )
 
         # Computing the gradients
         # Noise is multiplied by rank
         gradient = jax.tree_map(
             lambda noise, rank: jnp.multiply(noise, rank),
-            gradient_noise,
+            sample_noise,
             weights,
         )
         # Gradients are summed over the sample dimension, and divided by sigma and the number of samples
         # Gradient is negated to match the direction of the optimizer
-        gradient = jax.tree_map(
-            lambda x: jnp.reshape(x, (sample_number, -1)),
-            gradient,
-        )
         gradient = jax.tree_map(
             lambda g, p: jnp.reshape(
                 -jnp.sum(g, axis=0) / (total_sample_number * self._config.sample_sigma),
@@ -183,4 +160,4 @@ class OpenESEmitter(VanillaESEmitter):
         )
         offspring = optax.apply_updates(parent, offspring_update)
 
-        return offspring, optimizer_state, random_key
+        return offspring, optimizer_state, random_key, extra_scores

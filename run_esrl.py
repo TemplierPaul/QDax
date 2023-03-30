@@ -7,11 +7,10 @@ parser.add_argument(
     type=str, 
     default="walker2d_uni", 
     help='Environment name', 
-    choices=['ant_uni', 'hopper_uni', 'walker2d_uni', 'halfcheetah_uni', 'humanoid_uni', 'ant_omni', 'humanoid_omni', 'anttrap'],
+    choices=['ant_uni', 'hopper_uni', 'walker2d_uni', 'halfcheetah_uni', 'humanoid_uni', 'ant_omni', 'humanoid_omni'],
     dest='env_name'
     )
 parser.add_argument('--episode_length', type=int, default=1000, help='Number of steps per episode')
-# parser.add_argument('--gen', type=int, default=10000, help='Generations', dest='num_iterations')
 parser.add_argument('--evals', type=int, default=1000000, help='Evaluations')
 parser.add_argument('--seed', type=int, default=42, help='Random seed')
 parser.add_argument('--policy_hidden_layer_sizes', type=int, nargs='+', default=[128, 128], help='Policy network hidden layer sizes')
@@ -24,7 +23,7 @@ parser.add_argument('--max_bd', type=float, default=1.0, help='Maximum value for
 
 # ES
 # ES type
-parser.add_argument('--es', type=str, default='es', help='ES type', choices=['open', 'canonical', 'cmaes'])
+parser.add_argument('--es', type=str, default='open', help='ES type', choices=['open', 'canonical'])
 parser.add_argument('--pop', type=int, default=512, help='Population size')
 parser.add_argument('--es_sigma', type=float, default=0.01, help='Standard deviation of the Gaussian distribution')
 parser.add_argument('--sample_mirror', type=bool, default=True, help='Mirror sampling in ES')
@@ -32,6 +31,9 @@ parser.add_argument('--sample_rank_norm', type=bool, default=True, help='Rank no
 parser.add_argument('--adam_optimizer', type=bool, default=True, help='Use Adam optimizer instead of SGD')
 parser.add_argument('--learning_rate', type=float, default=0.01, help='Learning rate for Adam optimizer')
 parser.add_argument('--l2_coefficient', type=float, default=0.02, help='L2 coefficient for Adam optimizer')
+
+# ES + RL
+parser.add_argument('--actor_injection', action="store_true", default=False, help='Use actor injection')
 
 # NSES
 parser.add_argument('--nses_emitter', type=bool, default=False, help='Use NSES instead of ES')
@@ -69,24 +71,14 @@ if args.debug:
     for k, v in debug_values.items():
         setattr(args, k, v)
 
-log_period = args.log_period
-args.num_gens = args.evals // args.pop
-num_loops = int(args.num_gens / log_period)
-
 args.policy_hidden_layer_sizes = tuple(args.policy_hidden_layer_sizes)
+args.num_gens = args.evals // args.pop
 
-algos = {
-    'open': 'OpenAI',
-    'openai': 'OpenAI',
-    'canonical': 'Canonical',
-    'cmaes': 'CMAES',
-}
-args.algo = algos[args.es]
-
-args.config = f"ES {args.pop} - \u03C3 {args.es_sigma} - \u03B1 {args.learning_rate} - seed {args.seed}"
+args.algo = "ESRL-Alt"
+if args.actor_injection:
+    args.algo += "-AI"
 
 print("Parsed arguments:", args)
-
 
 # Import after parsing arguments
 import functools
@@ -94,8 +86,6 @@ import time
 from typing import Dict
 
 import jax
-
-print("Device count:", jax.device_count(), jax.devices())
 import jax.numpy as jnp
 
 from qdax import environments
@@ -110,10 +100,13 @@ from qdax.tasks.brax_envs import (
 from qdax.utils.metrics import CSVLogger, default_qd_metrics
 from qdax.utils.plotting import plot_map_elites_results
 
+from qdax.core.rl_es_parts.es_utils import ES, default_es_metrics, ESMetrics
 from qdax.core.rl_es_parts.open_es import OpenESEmitter, OpenESConfig
 from qdax.core.rl_es_parts.canonical_es import CanonicalESConfig, CanonicalESEmitter
-from qdax.core.rl_es_parts.mono_cmaes import MonoCMAESEmitter, MonoCMAESConfig
-from qdax.core.rl_es_parts.es_utils import ES, default_es_metrics, ESMetrics
+
+from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
+
+from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitter
 
 import wandb
 print("Imported modules")
@@ -182,7 +175,8 @@ metrics_function = functools.partial(
 # Algorithm #
 
 # ES emitter
-if args.algo == "OpenAI":
+if args.es in ["open", "openai"]:
+    args.es = "open"
     es_config = OpenESConfig(
         nses_emitter=args.nses_emitter,
         sample_number=args.pop,
@@ -193,7 +187,7 @@ if args.algo == "OpenAI":
         learning_rate=args.learning_rate,
         l2_coefficient=args.l2_coefficient,
         novelty_nearest_neighbors=args.novelty_nearest_neighbors,
-        actor_injection = False,
+        actor_injection = args.actor_injection,
     )
 
     es_emitter = OpenESEmitter(
@@ -202,7 +196,7 @@ if args.algo == "OpenAI":
         total_generations=args.num_gens,
         num_descriptors=env.behavior_descriptor_length,
     )
-elif args.algo == "Canonical":
+elif args.es in ["canonical"]:
     es_config = CanonicalESConfig(
         nses_emitter=args.nses_emitter,
         sample_number=args.pop,
@@ -210,7 +204,7 @@ elif args.algo == "Canonical":
         sample_sigma=args.es_sigma,
         learning_rate=args.learning_rate,
         novelty_nearest_neighbors=args.novelty_nearest_neighbors,
-        actor_injection = False,
+        actor_injection = args.actor_injection,
     )
 
     es_emitter = CanonicalESEmitter(
@@ -220,29 +214,52 @@ elif args.algo == "Canonical":
         num_descriptors=env.behavior_descriptor_length,
     )
 
-elif args.algo == "CMAES":
-    es_config = MonoCMAESConfig(
-        nses_emitter=args.nses_emitter,
-        sample_number=args.pop,
-        sample_sigma=args.es_sigma,
-        actor_injection = False,
-    )
-
-    es_emitter = MonoCMAESEmitter(
-        config=es_config,
-        scoring_fn=scoring_fn,
-        total_generations=args.num_gens,
-        num_descriptors=env.behavior_descriptor_length,
-    )
-
 else:
     raise ValueError(f"Unknown ES type: {args.es}")
 
+# QPG emitter
+rl_config = QualityPGConfig(
+    env_batch_size = 100,
+    num_critic_training_steps = 1000,
+    num_pg_training_steps = 1000,
 
-# Instantiate ES
+    # TD3 params
+    replay_buffer_size = 1000000,
+    critic_hidden_layer_size = (256, 256),
+    critic_learning_rate = 3e-4,
+    actor_learning_rate = 3e-4,
+    policy_learning_rate = 1e-3,
+    noise_clip = 0.5,
+    policy_noise = 0.2,
+    discount = 0.99,
+    reward_scaling = 1.0,
+    batch_size = 256,
+    soft_tau_update = 0.005,
+    policy_delay = 2
+)
+    
+rl_emitter = QualityPGEmitter(
+    config=rl_config,
+    policy_network=policy_network,
+    env=env,
+)
+
+# RL-ES emitter
+esrl_config = ESRLConfig(
+    es_config=es_config,
+    rl_config=rl_config,
+)
+
+esrl_emitter = ESRLEmitter(
+    config=esrl_config,
+    es_emitter=es_emitter,
+    rl_emitter=rl_emitter,
+)
+
+# ES 
 es = ES(
     scoring_function=scoring_fn,
-    emitter=es_emitter,
+    emitter=esrl_emitter,
     metrics_function=metrics_function,
 )
 
@@ -261,11 +278,12 @@ repertoire, emitter_state, random_key = es.init(
     init_variables, centroids, random_key
 )
 
-print("Initialized ES")
-print(es_emitter)
 
 #######
 # Run #
+
+log_period = args.log_period
+num_loops = int(args.num_gens / log_period)
 
 log_file = args.output
 if not log_file.endswith(".csv"):
@@ -313,7 +331,6 @@ try:
             "time": timelapse, 
             "loop": 1 + i, 
             "generation": gen,
-            "frames": gen * args.episode_length * args.pop,
             }
         for key, value in metrics.items():
             # take last value
@@ -324,14 +341,18 @@ try:
                 all_metrics[key] = jnp.concatenate([all_metrics[key], value])
             else:
                 all_metrics[key] = value
-
-                csv_logger.log(logged_metrics)
+        logged_metrics["frames"] = logged_metrics["evaluations"] * args.episode_length
+        csv_logger.log(logged_metrics)
         if wandb_run:
             wandb_run.log(logged_metrics)
 
 
         # Update bar
-        bar.set_description(f"Gen: {gen}, qd_score: {logged_metrics['qd_score']:.2f}, max_fitness: {logged_metrics['max_fitness']:.2f}, coverage: {logged_metrics['coverage']:.2f}, time: {timelapse:.2f}")
+        qd_score = logged_metrics["qd_score"]
+        max_fitness = logged_metrics["max_fitness"]
+        es_steps = logged_metrics["es_updates"]
+        rl_steps = logged_metrics["rl_updates"]
+        bar.set_description(f"Gen: {gen}, qd_score: {qd_score:.2f}, max_fitness: {max_fitness:.2f}, ES/RL:{es_steps}/{rl_steps} time: {timelapse:.2f}")
 except KeyboardInterrupt:
     print("Interrupted by user")
 
