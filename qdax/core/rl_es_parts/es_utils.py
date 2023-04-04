@@ -3,6 +3,7 @@ from typing import Callable, List, Optional, Tuple, Union
 import jax
 import jax.numpy as jnp
 from functools import partial
+from brax.io import html
 
 from qdax.types import Centroid, Descriptor, ExtraScores, Fitness, Genotype, RNGKey, Metrics
 
@@ -162,7 +163,30 @@ class ESRepertoire(MapElitesRepertoire):
             centroids=self.centroids,
         )
 
-    
+    def record_video(self, env, policy_network):
+        """Record a video of the best individual in the repertoire.
+        """
+        best_idx = jnp.argmax(self.fitnesses)
+
+        elite = jax.tree_util.tree_map(
+            lambda x: x[best_idx],
+            self.genotypes
+        )
+
+        jit_env_reset = jax.jit(env.reset)
+        jit_env_step = jax.jit(env.step)
+        jit_inference_fn = jax.jit(policy_network.apply)
+
+        rollout = []
+        rng = jax.random.PRNGKey(seed=1)
+        state = jit_env_reset(rng=rng)
+        while not state.done:
+            rollout.append(state)
+            action = jit_inference_fn(elite, state.obs)
+            state = jit_env_step(state, action)
+
+        return html.render(env.sys, [s.qp for s in rollout[:500]])
+
     
 class ES(MAPElites):
     """ Map-Elite structure to run a standalone ES
@@ -341,3 +365,4 @@ def default_es_metrics(repertoire: ESRepertoire, emitter_state: EmitterState, qd
 #     # Merge
 #     metrics.update(archive_metrics)
 #     return metrics
+

@@ -1,8 +1,3 @@
-"""Implements the PG Emitter from PGA-ME algorithm in jax for brax environments,
-based on:
-https://hal.archives-ouvertes.fr/hal-03135723v2/file/PGA_MAP_Elites_GECCO.pdf
-"""
-
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Optional, Tuple
@@ -24,6 +19,7 @@ from qdax.types import Descriptor, ExtraScores, Fitness, Genotype, Params, RNGKe
 from qdax.core.emitters.vanilla_es_emitter import VanillaESConfig, VanillaESEmitterState, VanillaESEmitter, NoveltyArchive
 from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
 from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
+from qdax.core.cmaes import CMAESState
 
 
 @dataclass
@@ -40,7 +36,7 @@ class ESRLEmitterState(EmitterState):
 
     es_state: VanillaESEmitterState
     rl_state: QualityPGEmitterState
-    metrics: ESMetrics
+    # metrics: ESMetrics
 
     def set_key(self, key: RNGKey) -> "ESRLEmitterState":
         """Sets the random key."""
@@ -53,6 +49,16 @@ class ESRLEmitterState(EmitterState):
         key = self.es_state.random_key
         key, subkey = jax.random.split(key)
         return subkey, self.set_key(key)
+    
+    @property
+    def metrics(self) -> ESMetrics:
+        """Returns the metrics."""
+        return self.es_state.metrics
+    
+    @metrics.setter
+    def metrics(self, metrics: ESMetrics) -> None:
+        """Sets the metrics."""
+        self.es_state = self.es_state.replace(metrics=metrics)
 
 class ESRLEmitter(Emitter):
     """
@@ -78,10 +84,10 @@ class ESRLEmitter(Emitter):
         """
         return 1
     
-    @partial(
-        jax.jit,
-        static_argnames=("self",),
-    )
+    # @partial(
+    #     jax.jit,
+    #     static_argnames=("self",),
+    # )
     def init(
         self, init_genotypes: Genotype, random_key: RNGKey
     ) -> Tuple[ESRLEmitterState, RNGKey]:
@@ -95,6 +101,8 @@ class ESRLEmitter(Emitter):
         Returns:
             the initialized emitter state.
         """
+        # print("RLES init_genotypes", jax.tree_map(lambda x: x.shape, init_genotypes))
+
         es_state, random_key = self.es_emitter.init(init_genotypes, random_key)
         rl_state, random_key = self.rl_emitter.init(init_genotypes, random_key)
         # Make sure the random key is the same for both emitters
@@ -144,6 +152,32 @@ class ESRLEmitter(Emitter):
         jax.jit,
         static_argnames=("self",),
     )
+    def choose_es_update(self, 
+        emitter_state: ESRLEmitterState,
+        fitnesses: Fitness,
+        descriptors: Descriptor,
+        extra_scores: ExtraScores,
+    ) -> bool:
+        """Choose between ES and RL update with probability 0.5.
+
+        Params:
+            emitter_state
+            fitnesses: the fitnesses of the offspring
+            descriptors: the descriptors of the offspring
+            extra_scores: the extra scores of the offspring
+
+        Returns:
+            True if ES update False else
+        """
+        cond = emitter_state.metrics.es_updates <= emitter_state.metrics.rl_updates
+
+        return cond
+
+
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
     def state_update(
         self,
         emitter_state: ESRLEmitterState,
@@ -178,7 +212,9 @@ class ESRLEmitter(Emitter):
         #                          p=jnp.array([self.config.es_proba, 1-self.config.es_proba]))
 
         # Do RL if the ES has done more steps than RL
-        cond = emitter_state.metrics.es_updates <= emitter_state.metrics.rl_updates
+        # cond = emitter_state.metrics.es_updates <= emitter_state.metrics.rl_updates
+
+        cond = self.choose_es_update(emitter_state, fitnesses, descriptors, extra_scores)
 
         emitter_state = jax.lax.cond(
             cond,
@@ -236,7 +272,7 @@ class ESRLEmitter(Emitter):
         genotypes = jax.tree_util.tree_map(
             lambda x: jnp.repeat(
                 jnp.expand_dims(x, axis=0), 
-                256, axis=0), 
+                48, axis=0), 
             genome
             )
         scoring_fn = self.es_emitter._scoring_fn
@@ -300,6 +336,30 @@ class ESRLEmitter(Emitter):
             scores_fn=scores,
             actor=emitter_state.rl_state.actor_params,
         )
+
+        center_fitness = jnp.mean(fitnesses)
+        metrics = emitter_state.metrics.replace(
+            center_fitness=center_fitness,
+            evaluations=emitter_state.metrics.evaluations + self._config.sample_number,
+        )
+
+        if "population_fitness" in extra_scores:
+            pop_mean = jnp.mean(extra_scores["population_fitness"])
+            pop_std = jnp.std(extra_scores["population_fitness"])
+            pop_min = jnp.min(extra_scores["population_fitness"])
+            pop_max = jnp.max(extra_scores["population_fitness"]) 
+            metrics = metrics.replace(
+                pop_mean=pop_mean,
+                pop_std=pop_std,
+                pop_min=pop_min,
+                pop_max=pop_max,
+            )
+
+        # Log sigma if using cmaes
+        if isinstance(emitter_state.es_state.optimizer_state, CMAESState):
+            metrics = metrics.replace(
+                sigma=emitter_state.es_state.optimizer_state.sigma,
+            )
 
         # Update ES emitter state
         es_state = emitter_state.es_state.replace(
@@ -415,3 +475,4 @@ class ESRLEmitter(Emitter):
         state = ESRLEmitterState(es_state, rl_state, metrics)
         state = state.set_key(random_key)
         return state
+

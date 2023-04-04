@@ -148,7 +148,7 @@ class VanillaESEmitterState(EmitterState):
     generation_count: int
     novelty_archive: NoveltyArchive
     random_key: RNGKey
-    metrics: ESMetrics
+    metrics: ESMetrics = ESMetrics()
 
 
 class VanillaESEmitter(Emitter):

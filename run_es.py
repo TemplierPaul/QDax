@@ -37,6 +37,11 @@ parser.add_argument('--l2_coefficient', type=float, default=0.02, help='L2 coeff
 parser.add_argument('--nses_emitter', type=bool, default=False, help='Use NSES instead of ES')
 parser.add_argument('--novelty_nearest_neighbors', type=int, default=10, help='Number of nearest neighbors to use for novelty computation')
 
+# RL
+parser.add_argument('--rl', default=False, action="store_true", help='Add RL')
+parser.add_argument('--actor_injection', action="store_true", default=False, help='Use actor injection')
+parser.add_argument('--carlies', default=False, action="store_true", help='Add CARLIES')
+
 # File output
 parser.add_argument('--output', type=str, default='output', help='Output file')
 parser.add_argument('--plot', default=False, action="store_true", help='Make plots')
@@ -55,6 +60,10 @@ parser.add_argument('--debug', default=False, action="store_true", help='Debug f
 # parse arguments
 args = parser.parse_args()
 
+if args.carlies:
+    args.rl = True
+    args.actor_injection = False
+
 if args.debug:
     # Cheap ES to debug
     debug_values = {
@@ -63,7 +72,7 @@ if args.debug:
         "pop": 10,
         'evals': 100,
         'seed': 42,
-        'policy_hidden_layer_sizes': (32, 32),
+        'policy_hidden_layer_sizes': (16, 16),
         "output": "debug"
     }
     for k, v in debug_values.items():
@@ -83,7 +92,15 @@ algos = {
 }
 args.algo = algos[args.es]
 
-args.config = f"ES {args.pop} - \u03C3 {args.es_sigma} - \u03B1 {args.learning_rate} - seed {args.seed}"
+if args.rl:
+    suffix = 'RL'
+    if args.carlies:
+        suffix = 'CARLIES'
+    args.algo += f"-{suffix}"
+    if args.actor_injection:
+        args.algo += "-AI"
+
+args.config = f"ES {args.pop} - \u03C3 {args.es_sigma} - \u03B1 {args.learning_rate}"
 
 print("Parsed arguments:", args)
 
@@ -114,6 +131,12 @@ from qdax.core.rl_es_parts.open_es import OpenESEmitter, OpenESConfig
 from qdax.core.rl_es_parts.canonical_es import CanonicalESConfig, CanonicalESEmitter
 from qdax.core.rl_es_parts.mono_cmaes import MonoCMAESEmitter, MonoCMAESConfig
 from qdax.core.rl_es_parts.es_utils import ES, default_es_metrics, ESMetrics
+
+from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
+
+from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitter
+from qdax.core.emitters.carlies_emitter import CARLIES
+
 
 import wandb
 print("Imported modules")
@@ -154,6 +177,8 @@ keys = jax.random.split(subkey, num=1)
 fake_batch = jnp.zeros(shape=(1, env.observation_size))
 init_variables = jax.vmap(policy_network.init)(keys, fake_batch)
 
+# print("Init variables", jax.tree_map(lambda x: x.shape, init_variables))
+
 # Play reset fn
 # WARNING: use "env.reset" for stochastic environment,
 # use "lambda random_key: init_state" for deterministic environment
@@ -182,7 +207,7 @@ metrics_function = functools.partial(
 # Algorithm #
 
 # ES emitter
-if args.algo == "OpenAI":
+if args.es in ["open", "openai"]:
     es_config = OpenESConfig(
         nses_emitter=args.nses_emitter,
         sample_number=args.pop,
@@ -202,7 +227,7 @@ if args.algo == "OpenAI":
         total_generations=args.num_gens,
         num_descriptors=env.behavior_descriptor_length,
     )
-elif args.algo == "Canonical":
+elif args.es in ["canonical"]:
     es_config = CanonicalESConfig(
         nses_emitter=args.nses_emitter,
         sample_number=args.pop,
@@ -220,7 +245,7 @@ elif args.algo == "Canonical":
         num_descriptors=env.behavior_descriptor_length,
     )
 
-elif args.algo == "CMAES":
+elif args.es in ["cmaes"]:
     es_config = MonoCMAESConfig(
         nses_emitter=args.nses_emitter,
         sample_number=args.pop,
@@ -238,11 +263,58 @@ elif args.algo == "CMAES":
 else:
     raise ValueError(f"Unknown ES type: {args.es}")
 
+if args.rl:
+    # ESRL emitter
+    emitter_type = ESRLEmitter
+    if args.carlies:
+        emitter_type = CARLIES
+
+    # QPG emitter
+    rl_config = QualityPGConfig(
+        env_batch_size = 100,
+        num_critic_training_steps = 1000,
+        num_pg_training_steps = 1000,
+
+        # TD3 params
+        replay_buffer_size = 1000000,
+        critic_hidden_layer_size = (256, 256),
+        critic_learning_rate = 3e-4,
+        actor_learning_rate = 3e-4,
+        policy_learning_rate = 1e-3,
+        noise_clip = 0.5,
+        policy_noise = 0.2,
+        discount = 0.99,
+        reward_scaling = 1.0,
+        batch_size = 256,
+        soft_tau_update = 0.005,
+        policy_delay = 2
+    )
+        
+    rl_emitter = QualityPGEmitter(
+        config=rl_config,
+        policy_network=policy_network,
+        env=env,
+    )
+
+    # RL-ES emitter
+    esrl_config = ESRLConfig(
+        es_config=es_config,
+        rl_config=rl_config,
+    )
+
+    emitter = emitter_type(
+        config=esrl_config,
+        es_emitter=es_emitter,
+        rl_emitter=rl_emitter,
+    )
+
+else:
+    emitter = es_emitter
 
 # Instantiate ES
 es = ES(
     scoring_function=scoring_fn,
-    emitter=es_emitter,
+    emitter=emitter,
     metrics_function=metrics_function,
 )
 
@@ -335,6 +407,7 @@ try:
 except KeyboardInterrupt:
     print("Interrupted by user")
 
+
 #################
 # Visualisation #
 if args.plot:
@@ -353,17 +426,25 @@ if args.plot:
     import matplotlib.pyplot as plt
     plt.savefig(plot_file)
 
-    from qdax.utils.plotting import plot_2d_map_elites_repertoire
+    # Log the repertoire plot
+    if wandb_run:
+        from qdax.utils.plotting import plot_2d_map_elites_repertoire
 
-    fig, ax = plot_2d_map_elites_repertoire(
-        centroids=repertoire.centroids,
-        repertoire_fitnesses=repertoire.fitnesses,
-        minval=args.min_bd,
-        maxval=args.max_bd,
-        repertoire_descriptors=repertoire.descriptors,
-    )
+        fig, ax = plot_2d_map_elites_repertoire(
+            centroids=repertoire.centroids,
+            repertoire_fitnesses=repertoire.fitnesses,
+            minval=args.min_bd,
+            maxval=args.max_bd,
+            repertoire_descriptors=repertoire.descriptors,
+        )
+        wandb_run.log({"archive": wandb.Image(fig)})
+
+    html_content = repertoire.record_video(env, policy_network)
+    video_file = plot_file.replace(".png", ".html")
+    with open(video_file, "w") as file:
+        file.write(html_content)
 
     # Log the plot
     if wandb_run:
-        wandb_run.log({"archive": wandb.Image(fig)})
+        wandb.log({"best_agent": wandb.Html(html_content)})
         wandb.finish()

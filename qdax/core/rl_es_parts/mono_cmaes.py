@@ -113,7 +113,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
             The initial state of the VanillaESEmitter, a new random key.
         """
         # Initialisation requires one initial genotype
-        # print("init_genotypes", init_genotypes)
+        # print("CMAES init_genotypes", jax.tree_map(lambda x: x.shape, init_genotypes))
 
         if jax.tree_util.tree_leaves(init_genotypes)[0].shape[0] > 1:
             init_genotypes = jax.tree_util.tree_map(
@@ -123,11 +123,13 @@ class MonoCMAESEmitter(VanillaESEmitter):
 
         flat_variables, tree_def = tree_flatten(init_genotypes)
         self.layer_shapes = [x.shape[1:] for x in flat_variables]
-        # print("layer_shapes", self.layer_shapes)
+        print("layer_shapes", self.layer_shapes)
 
         vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
         sizes = [x.size for x in flat_variables]
         sizes = jnp.array(sizes)
+
+        print("sizes", sizes)
 
         self.tree_def = tree_def
         self.layer_sizes = sizes.tolist()

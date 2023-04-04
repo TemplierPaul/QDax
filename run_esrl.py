@@ -23,7 +23,7 @@ parser.add_argument('--max_bd', type=float, default=1.0, help='Maximum value for
 
 # ES
 # ES type
-parser.add_argument('--es', type=str, default='open', help='ES type', choices=['open', 'canonical'])
+parser.add_argument('--es', type=str, default='open', help='ES type', choices=['open', 'canonical', 'cmaes'])
 parser.add_argument('--pop', type=int, default=512, help='Population size')
 parser.add_argument('--es_sigma', type=float, default=0.01, help='Standard deviation of the Gaussian distribution')
 parser.add_argument('--sample_mirror', type=bool, default=True, help='Mirror sampling in ES')
@@ -74,9 +74,18 @@ if args.debug:
 args.policy_hidden_layer_sizes = tuple(args.policy_hidden_layer_sizes)
 args.num_gens = args.evals // args.pop
 
-args.algo = "ESRL-Alt"
+algos = {
+    'open': 'OpenAI',
+    'openai': 'OpenAI',
+    'canonical': 'Canonical',
+    'cmaes': 'CMAES',
+}
+args.algo = f"{algos[args.es]}-RL" 
 if args.actor_injection:
-    args.algo += "-AI"
+    args.algo += " +AI"
+
+args.config = f"RL+ES {args.pop} - \u03C3 {args.es_sigma} - \u03B1 {args.learning_rate}"
+
 
 print("Parsed arguments:", args)
 
@@ -103,6 +112,7 @@ from qdax.utils.plotting import plot_map_elites_results
 from qdax.core.rl_es_parts.es_utils import ES, default_es_metrics, ESMetrics
 from qdax.core.rl_es_parts.open_es import OpenESEmitter, OpenESConfig
 from qdax.core.rl_es_parts.canonical_es import CanonicalESConfig, CanonicalESEmitter
+from qdax.core.rl_es_parts.mono_cmaes import MonoCMAESEmitter, MonoCMAESConfig
 
 from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
 
@@ -213,7 +223,20 @@ elif args.es in ["canonical"]:
         total_generations=args.num_gens,
         num_descriptors=env.behavior_descriptor_length,
     )
+elif args.es in ["cmaes"]:
+    es_config = MonoCMAESConfig(
+        nses_emitter=args.nses_emitter,
+        sample_number=args.pop,
+        sample_sigma=args.es_sigma,
+        actor_injection = False,
+    )
 
+    es_emitter = MonoCMAESEmitter(
+        config=es_config,
+        scoring_fn=scoring_fn,
+        total_generations=args.num_gens,
+        num_descriptors=env.behavior_descriptor_length,
+    )
 else:
     raise ValueError(f"Unknown ES type: {args.es}")
 

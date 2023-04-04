@@ -1,6 +1,6 @@
 from __future__ import annotations
 from qdax.core.emitters.vanilla_es_emitter import VanillaESConfig, VanillaESEmitterState, VanillaESEmitter, NoveltyArchive
-from qdax.core.rl_es_parts.es_utils import ESRepertoire
+from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 
 from dataclasses import dataclass
 from functools import partial
@@ -53,6 +53,7 @@ class CanonicalESEmitterState(EmitterState):
     novelty_archive: NoveltyArchive
     random_key: RNGKey
     optimizer_state: optax.OptState = None # Not used by canonical ES
+    metrics: ESMetrics = ESMetrics()
 
 
 class CanonicalESEmitter(VanillaESEmitter):
@@ -88,6 +89,12 @@ class CanonicalESEmitter(VanillaESEmitter):
         self._scoring_fn = scoring_fn
         self._total_generations = total_generations
         self._num_descriptors = num_descriptors
+
+        # Actor injection
+        if self._config.actor_injection:
+            self._actor_injection = self._inject_actor
+        else:
+            self._actor_injection = lambda x, a, p: x
 
     @partial(
         jax.jit,
@@ -167,6 +174,14 @@ class CanonicalESEmitter(VanillaESEmitter):
             ),
             parent,
         )
+
+        # Actor injection if needed in config and if actor is not None
+        sample_noise = self._actor_injection(
+            sample_noise,
+            actor,
+            parent,
+        )
+
         gradient_noise = sample_noise
 
         # Applying noise
@@ -180,11 +195,11 @@ class CanonicalESEmitter(VanillaESEmitter):
             sample_noise,
         )
 
-        if self._config.actor_injection:
-            samples = jax.tree_map(
-                lambda x: jnp.concatenate([x, actor], axis=0),
-                samples,
-            )
+        # if self._config.actor_injection:
+        #     samples = jax.tree_map(
+        #         lambda x: jnp.concatenate([x, actor], axis=0),
+        #         samples,
+        #     )
 
         # Evaluating samples
         fitnesses, descriptors, extra_scores, random_key = self._scoring_fn(
@@ -286,15 +301,35 @@ class CanonicalESEmitter(VanillaESEmitter):
                 return fitnesses
 
         # Run es process
-        offspring, random_key, extra_scores = self._es_emitter(
+        offspring, optimizer_state, random_key, extra_scores = self._es_emitter(
             parent=genotypes,
             random_key=emitter_state.random_key,
             scores_fn=scores,
+            optimizer_state=emitter_state.optimizer_state,
         )
+
+        center_fitness = jnp.mean(fitnesses)
+        metrics = emitter_state.metrics.replace(
+            center_fitness=center_fitness,
+            evaluations=emitter_state.metrics.evaluations + self._config.sample_number,
+        )
+
+        if "population_fitness" in extra_scores:
+            pop_mean = jnp.mean(extra_scores["population_fitness"])
+            pop_std = jnp.std(extra_scores["population_fitness"])
+            pop_min = jnp.min(extra_scores["population_fitness"])
+            pop_max = jnp.max(extra_scores["population_fitness"]) 
+            metrics = metrics.replace(
+                pop_mean=pop_mean,
+                pop_std=pop_std,
+                pop_min=pop_min,
+                pop_max=pop_max,
+            )
 
         return emitter_state.replace(  # type: ignore
             offspring=offspring,
             novelty_archive=novelty_archive,
             generation_count=emitter_state.generation_count + 1,
             random_key=random_key,
+            metrics=metrics,
         )
