@@ -23,7 +23,7 @@ parser.add_argument('--max_bd', type=float, default=1.0, help='Maximum value for
 
 # ES
 # ES type
-parser.add_argument('--es', type=str, default='es', help='ES type', choices=['open', 'canonical', 'cmaes'])
+parser.add_argument('--es', type=str, default='open', help='ES type', choices=['open', 'canonical', 'cmaes'])
 parser.add_argument('--pop', type=int, default=512, help='Population size')
 parser.add_argument('--es_sigma', type=float, default=0.01, help='Standard deviation of the Gaussian distribution')
 parser.add_argument('--sample_mirror', type=bool, default=True, help='Mirror sampling in ES')
@@ -82,7 +82,7 @@ args.policy_hidden_layer_sizes = tuple(args.policy_hidden_layer_sizes)
 
 args.algo = "PGA-ME"
 
-args.config = f"{args.pop}"
+args.config = f"PGA {args.pop}"
 print("Parsed arguments:", args)
 
 
@@ -176,8 +176,8 @@ policy_network = MLP(
 
 # Init population of controllers
 random_key, subkey = jax.random.split(random_key)
-keys = jax.random.split(subkey, num=1)
-fake_batch = jnp.zeros(shape=(1, env.observation_size))
+keys = jax.random.split(subkey, num=env_batch_size)
+fake_batch = jnp.zeros(shape=(env_batch_size, env.observation_size))
 init_variables = jax.vmap(policy_network.init)(keys, fake_batch)
 
 # Create the initial environment states
@@ -186,7 +186,7 @@ keys = jnp.repeat(jnp.expand_dims(subkey, axis=0), repeats=env_batch_size, axis=
 reset_fn = jax.jit(jax.vmap(env.reset))
 init_states = reset_fn(keys)
 
-play_reset_fn = env.reset
+# play_reset_fn = env.reset
 
 # Define the fonction to play a step with the policy in the environment
 def play_step_fn(
@@ -220,15 +220,15 @@ def play_step_fn(
 bd_extraction_fn = environments.behavior_descriptor_extractor[args.env_name]
 scoring_fn = functools.partial(
     scoring_function,
+    init_states=init_states,
     episode_length=args.episode_length,
     # play_reset_fn=play_reset_fn,
-    init_states=init_states,
     play_step_fn=play_step_fn,
     behavior_descriptor_extractor=bd_extraction_fn,
 )
 
 # Get minimum reward value to make sure qd_score are positive
-reward_offset = environments.reward_offset[env_name]
+reward_offset = environments.reward_offset[args.env_name]
 
 # Define a metrics function
 metrics_function = functools.partial(
@@ -295,7 +295,7 @@ num_loops = int(num_iterations / log_period)
 
 csv_logger = CSVLogger(
     "pgame-logs.csv",
-    header=["loop", "iteration", "qd_score", "max_fitness", "coverage", "time"]
+    header=["loop", "iteration", "qd_score", "max_fitness", "coverage", "time", "generation"]
 )
 all_metrics = {}
 
@@ -324,7 +324,6 @@ try:
             "time": timelapse, 
             "loop": 1 + i, 
             "generation": gen,
-            "frames": gen * args.episode_length * args.pop,
             }
         
         for key, value in metrics.items():
