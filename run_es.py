@@ -24,7 +24,7 @@ parser.add_argument('--max_bd', type=float, default=1.0, help='Maximum value for
 
 # ES
 # ES type
-parser.add_argument('--es', type=str, default='es', help='ES type', choices=['open', 'canonical', 'cmaes'])
+parser.add_argument('--es', type=str, default='es', help='ES type', choices=['open', 'canonical', 'cmaes', 'random'])
 parser.add_argument('--pop', type=int, default=512, help='Population size')
 parser.add_argument('--es_sigma', type=float, default=0.01, help='Standard deviation of the Gaussian distribution')
 parser.add_argument('--sample_mirror', type=bool, default=True, help='Mirror sampling in ES')
@@ -89,6 +89,7 @@ algos = {
     'openai': 'OpenAI',
     'canonical': 'Canonical',
     'cmaes': 'CMAES',
+    'random': 'Random',
 }
 args.algo = algos[args.es]
 
@@ -129,6 +130,7 @@ from qdax.utils.plotting import plot_map_elites_results
 
 from qdax.core.rl_es_parts.open_es import OpenESEmitter, OpenESConfig
 from qdax.core.rl_es_parts.canonical_es import CanonicalESConfig, CanonicalESEmitter
+from qdax.core.rl_es_parts.random_search import RandomConfig, RandomEmitter
 from qdax.core.rl_es_parts.mono_cmaes import MonoCMAESEmitter, MonoCMAESConfig
 from qdax.core.rl_es_parts.es_utils import ES, default_es_metrics, ESMetrics
 
@@ -255,6 +257,19 @@ elif args.es in ["cmaes"]:
 
     es_emitter = MonoCMAESEmitter(
         config=es_config,
+        scoring_fn=scoring_fn,
+        total_generations=args.num_gens,
+        num_descriptors=env.behavior_descriptor_length,
+    )
+
+elif args.es in ["random"]:
+    es_config = RandomConfig(
+        nses_emitter=args.nses_emitter,
+        sample_number=args.pop,
+        actor_injection = False,
+    )
+    
+    es_emitter = RandomEmitter(
         scoring_fn=scoring_fn,
         total_generations=args.num_gens,
         num_descriptors=env.behavior_descriptor_length,
