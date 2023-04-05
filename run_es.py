@@ -270,6 +270,7 @@ elif args.es in ["random"]:
     )
     
     es_emitter = RandomEmitter(
+        config=es_config,
         scoring_fn=scoring_fn,
         total_generations=args.num_gens,
         num_descriptors=env.behavior_descriptor_length,

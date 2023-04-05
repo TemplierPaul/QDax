@@ -40,6 +40,72 @@ class RandomEmitterState(VanillaESEmitterState):
 class RandomEmitter(VanillaESEmitter):
     '''Random search emitter.'''
 
+    def __init__(
+        self,
+        config: VanillaESConfig,
+        scoring_fn: Callable[
+            [Genotype, RNGKey], Tuple[Fitness, Descriptor, ExtraScores, RNGKey]
+        ],
+        total_generations: int = 1,
+        num_descriptors: int = 2,
+    ) -> None:
+        """Initialise the ES or NSES emitter.
+        WARNING: total_generations and num_descriptors are required for NSES.
+
+        Args:
+            config: algorithm config
+            scoring_fn: used to evaluate the samples for the gradient estimate.
+            total_generations: total number of generations for which the
+                emitter will run, allow to initialise the novelty archive.
+            num_descriptors: dimension of the descriptors, used to initialise
+                the empty novelty archive.
+        """
+        self._config = config
+        self._scoring_fn = scoring_fn
+        self._total_generations = total_generations
+        self._num_descriptors = num_descriptors
+
+        # Actor injection
+        self._actor_injection = lambda x, a, p: x
+
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def init(
+        self, init_genotypes: Genotype, random_key: RNGKey
+    ) -> Tuple[VanillaESEmitterState, RNGKey]:
+        """Initializes the emitter state.
+
+        Args:
+            init_genotypes: The initial population.
+            random_key: A random key.
+
+        Returns:
+            The initial state of the VanillaESEmitter, a new random key.
+        """
+        # Initialisation requires one initial genotype
+        if jax.tree_util.tree_leaves(init_genotypes)[0].shape[0] > 1:
+            init_genotypes = jax.tree_util.tree_map(
+                lambda x: x[0],
+                init_genotypes,
+            )
+
+        # Create empty Novelty archive
+        novelty_archive = NoveltyArchive.init(
+            self._total_generations, self._num_descriptors
+        )
+
+        return (
+            RandomEmitterState(
+                offspring=init_genotypes,
+                generation_count=0,
+                novelty_archive=novelty_archive,
+                random_key=random_key,
+            ),
+            random_key,
+        )
+
     @partial(
         jax.jit,
         static_argnames=("self", "scores_fn"),
@@ -69,8 +135,7 @@ class RandomEmitter(VanillaESEmitter):
         random_key, subkey = jax.random.split(random_key)
 
         # Sampling mirror noise
-        sample_number = self._config.sample_number if not self._config.actor_injection else self._config.sample_number - 1
-
+        sample_number = self._config.sample_number 
         # Sampling noise
         sample_number = sample_number 
         sample_noise = jax.tree_map(
@@ -104,8 +169,8 @@ class RandomEmitter(VanillaESEmitter):
         
         # Get the best sample
         offspring = jax.tree_map(
-            lambda x: x[best_index],
+            lambda x: jnp.expand_dims(x[best_index], axis=0),
             samples,
         )
-
+        
         return offspring, optimizer_state, random_key, extra_scores

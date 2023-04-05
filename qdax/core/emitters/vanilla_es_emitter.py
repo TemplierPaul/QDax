@@ -143,11 +143,11 @@ class VanillaESEmitterState(EmitterState):
         random_key: key to handle stochastic operations
     """
 
-    optimizer_state: optax.OptState
     offspring: Genotype
     generation_count: int
     novelty_archive: NoveltyArchive
     random_key: RNGKey
+    optimizer_state: optax.OptState
     metrics: ESMetrics = ESMetrics()
 
 
