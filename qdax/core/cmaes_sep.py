@@ -10,15 +10,15 @@ import jax
 import jax.numpy as jnp
 
 from qdax.types import Fitness, Genotype, Mask, RNGKey
+from qdax.core.cmaes import CMAESState, CMAES
 
-
-class CMAESState(flax.struct.PyTreeNode):
-    """Describe a state of the Covariance Matrix Adaptation Evolution Strategy
+class SepCMAESState(flax.struct.PyTreeNode):
+    """Describe a state of the Separable Covariance Matrix Adaptation Evolution Strategy
     (CMA-ES) algorithm.
 
     Args:
         mean: mean of the gaussian distribution used to generate solutions
-        cov_matrix: covariance matrix of the gaussian distribution used to
+        cov_vector: covariance vector of the gaussian distribution used to
             generate solutions - (multiplied by sigma for sampling).
         num_updates: number of updates made by the CMAES optimizer since the
             beginning of the process.
@@ -28,23 +28,22 @@ class CMAESState(flax.struct.PyTreeNode):
         p_s: evolution path
         eigen_updates: track the latest update to know when to do the next one.
         eigenvalues: latest eigenvalues
-        invsqrt_cov: latest inv sqrt value of the cov matrix.
+        D:
     """
 
     mean: jnp.ndarray
-    cov_matrix: jnp.ndarray
+    cov_vector: jnp.ndarray
     num_updates: int
     sigma: float
     p_c: jnp.ndarray
     p_s: jnp.ndarray
     eigen_updates: int
     eigenvalues: jnp.ndarray
-    invsqrt_cov: jnp.ndarray
+    D: jnp.ndarray
 
-
-class CMAES:
+class SepCMAES(CMAES):
     """
-    Class to run the CMA-ES algorithm.
+    Class to run the Separable CMA-ES algorithm.
     """
 
     def __init__(
@@ -105,19 +104,22 @@ class CMAES:
         self._parents_eff = 1 / (self._weights**2).sum()
 
         # adaptation  parameters
-        self._c_s = (self._parents_eff + 2) / (self._search_dim + self._parents_eff + 5)
-        self._c_c = (4 + self._parents_eff / self._search_dim) / (
-            self._search_dim + 4 + 2 * self._parents_eff / self._search_dim
-        )
+        # Eq 55
+        self._c_s = (self._parents_eff + 2) / (self._search_dim + self._parents_eff + 3)
+        
+        # Eq 56
+        self._c_c = 4 / (self._search_dim + 4)
 
         # learning rate for rank-1 update of C
         self._c_1 = 2 / (self._parents_eff + (self._search_dim + jnp.sqrt(2)) ** 2)
 
         # learning rate for rank-(num best) updates
-        tmp = 2 * (self._parents_eff - 2 + 1 / self._parents_eff)
-        self._c_cov = min(
-            1 - self._c_1, tmp / (self._parents_eff + (self._search_dim + 2) ** 2)
+        c_cov_full = 2 / self._parents_eff / ((self._search_dim + jnp.sqrt(2)) ** 2)
+        c_cov_full += (1 - 1 / self._parents_eff) * min(
+            1, 
+            (2 * self._parents_eff - 1) / ((self._search_dim + 2) ** 2 + self._parents_eff)
         )
+        self._c_cov = (self._search_dim + 2) / 3 * c_cov_full
 
         # damping for sigma
         self._d_s = (
@@ -138,7 +140,7 @@ class CMAES:
                 / (self._search_dim * (self._c_1 + self._c_cov))
             )
 
-    def init(self) -> CMAESState:
+    def init(self) -> SepCMAESState:
         """
         Init the CMA-ES algorithm.
 
@@ -146,27 +148,29 @@ class CMAES:
             an initial state for the algorithm
         """
 
-        # initial cov matrix
-        cov_matrix = jnp.eye(self._search_dim)
+        # initial cov vector
+        # cov_vector = jnp.eye(self._search_dim)
+        cov_vector = jnp.ones(shape=(self._search_dim,))
 
         # initial inv sqrt of the cov matrix - cov is already diag
-        invsqrt_cov = jnp.diag(1 / jnp.sqrt(jnp.diag(cov_matrix)))
+        # D = jnp.diag(1 / jnp.sqrt(jnp.diag(cov_vector)))
+        D = 1 / jnp.sqrt(cov_vector)
 
-        return CMAESState(
+        return SepCMAESState(
             mean=self._mean_init,
-            cov_matrix=cov_matrix,
+            cov_vector=cov_vector,
             sigma=self._init_sigma,
             num_updates=0,
             p_c=jnp.zeros(shape=(self._search_dim,)),
             p_s=jnp.zeros(shape=(self._search_dim,)),
             eigen_updates=0,
             eigenvalues=jnp.ones(shape=(self._search_dim,)),
-            invsqrt_cov=invsqrt_cov,
+            D=D,
         )
 
     @partial(jax.jit, static_argnames=("self",))
     def sample(
-        self, cmaes_state: CMAESState, random_key: RNGKey
+        self, cmaes_state: SepCMAESState, random_key: RNGKey
     ) -> Tuple[Genotype, RNGKey]:
         """
         Sample a population.
@@ -180,52 +184,48 @@ class CMAES:
             a new random key.
         """
         random_key, subkey = jax.random.split(random_key)
-        samples = jax.random.multivariate_normal(
-            subkey,
-            shape=(self._population_size,),
-            mean=cmaes_state.mean,
-            cov=(cmaes_state.sigma**2) * cmaes_state.cov_matrix,
-        )
+
+        # N(0, I)
+        sample_noise = jax.random.normal(
+                key=subkey,
+                shape=(
+                    self._population_size,
+                    self._search_dim,
+                )
+            )
+        print("N(O, I)", sample_noise.shape)
+
+        # Multiply each vector by the covariance diagonal
+        # N(O, C)
+        sample_noise = jax.vmap(
+            lambda n: n * cmaes_state.cov_vector,
+            in_axes=0,
+        )(sample_noise)
+
+        # sample_noise = jax.vmap( 
+        #     lambda n: n * cmaes_state.cov_vector,
+        #     # in_axes=0,
+        # )(sample_noise) 
+
+        print("N(0, C)", sample_noise.shape)
+        
+        # Applying noise
+        samples = jax.vmap(
+            lambda s: s * cmaes_state.sigma + cmaes_state.mean,
+            in_axes=0,
+        )(sample_noise)
+
+        print("N(m, C)", samples.shape)
+
         return samples, random_key
-
-    @partial(jax.jit, static_argnames=("self",))
-    def update_state(
-        self,
-        cmaes_state: CMAESState,
-        sorted_candidates: Genotype,
-    ) -> CMAESState:
-        return self._update_state(  # type: ignore
-            cmaes_state=cmaes_state,
-            sorted_candidates=sorted_candidates,
-            weights=self._weights,
-        )
-
-    @partial(jax.jit, static_argnames=("self",))
-    def update_state_with_mask(
-        self, cmaes_state: CMAESState, sorted_candidates: Genotype, mask: Mask
-    ) -> CMAESState:
-        """Update weights with a mask, then update the state.
-
-        Convention: 1 stays, 0 a removed.
-        """
-
-        # update weights by multiplying by a mask
-        weights = jnp.multiply(self._weights, mask)
-        weights = weights / (weights.sum())
-
-        return self._update_state(  # type: ignore
-            cmaes_state=cmaes_state,
-            sorted_candidates=sorted_candidates,
-            weights=weights,
-        )
-
+    
     @partial(jax.jit, static_argnames=("self",))
     def _update_state(
         self,
-        cmaes_state: CMAESState,
+        cmaes_state: SepCMAESState,
         sorted_candidates: Genotype,
         weights: jnp.ndarray,
-    ) -> CMAESState:
+    ) -> SepCMAESState:
         """Updates the state when candidates have already been
         sorted and selected.
 
@@ -243,153 +243,98 @@ class CMAES:
         p_s = cmaes_state.p_s
         sigma = cmaes_state.sigma
         num_updates = cmaes_state.num_updates
-        cov = cmaes_state.cov_matrix
+        cov = cmaes_state.cov_vector
         mean = cmaes_state.mean
 
         eigen_updates = cmaes_state.eigen_updates
         eigenvalues = cmaes_state.eigenvalues
-        invsqrt_cov = cmaes_state.invsqrt_cov
+        D = cmaes_state.D
 
         # update mean by recombination
         old_mean = mean
         mean = weights @ sorted_candidates
-       
+
         def update_eigen(
-            operand: Tuple[jnp.ndarray, int]
+            cov: jnp.ndarray, 
+            num_updates: int
         ) -> Tuple[int, jnp.ndarray, jnp.ndarray]:
 
-            # unpack data
-            cov, num_updates = operand
-
-            # enfore symmetry - did not change anything
-            cov = jnp.triu(cov) + jnp.triu(cov, 1).T
-
-            # get eigen decomposition: eigenvalues, eigenvectors
-            # C = B D² B.T
-            D2, B = jnp.linalg.eigh(cov)
-
-            # compute new invsqrt
-            # C^-1 = B D⁻² B.T
-            invsqrt = B @ jnp.diag(1 / jnp.sqrt(D2)) @ B.T
+            D = jnp.sqrt(cov)
 
             # update the eigen value decomposition tracker
             eigen_updates = num_updates
 
-            return eigen_updates, D2, invsqrt
-
-        # condition for recomputing the eig decomposition
-        eigen_condition = (num_updates - eigen_updates) >= self._eigen_comput_period
+            return eigen_updates, D
 
         # decomposition of cov
-        eigen_updates, D2, invsqrt = jax.lax.cond(
-            eigen_condition,
-            update_eigen,
-            lambda _: (eigen_updates, eigenvalues, invsqrt_cov),
-            operand=(cov, num_updates),
-        )
+        eigen_updates, D = update_eigen(cov, num_updates)
 
-        z = (1 / sigma) * (mean - old_mean)
-        z_w = invsqrt @ z
+        z = (1 / sigma) * (mean - old_mean) # Get update vector N(0, C)
+        z_w = z / D # Get update vector N(0, I)
 
         # update evolution paths - cumulation
         p_s = (1 - self._c_s) * p_s + jnp.sqrt(
             self._c_s * (2 - self._c_s) * self._parents_eff
         ) * z_w
 
-        tmp_1 = jnp.linalg.norm(p_s) / jnp.sqrt(
+        p_s_norm = jnp.linalg.norm(p_s)
+        h_sigma = p_s_norm / jnp.sqrt(
             1 - (1 - self._c_s) ** (2 * num_updates)
         ) <= self._chi * (1.4 + 2 / (self._search_dim + 1))
 
-        p_c = (1 - self._c_c) * p_c + tmp_1 * jnp.sqrt(
+        # Eq 45
+        p_c = (1 - self._c_c) * p_c + h_sigma * jnp.sqrt(
             self._c_c * (2 - self._c_c) * self._parents_eff
         ) * z
 
-        # update covariance matrix
-        pp_c = jnp.expand_dims(p_c, axis=1)
+        delta_h_sigma = (1 - h_sigma) * self._c_c * (2 - self._c_c) # p 28
 
-        coeff_tmp = (sorted_candidates - old_mean) / sigma
-        cov_rank = coeff_tmp.T @ jnp.diag(weights.squeeze()) @ coeff_tmp
+        # update covariance matrix
+        # Eq 46
+        # pp_c = jnp.expand_dims(p_c, axis=1)
+        
+        rank_one = p_c **2 
+
+        y_k = (sorted_candidates - old_mean) / sigma
+        # print("y_k", y_k.shape)
+        # print("weights", weights.shape)
+        # rank_mu = y_k ** 2 * weights 
+
+        rank_mu = jax.vmap(
+            lambda y, w: y ** 2 * w,
+            # in_axes=(0, 0),
+        )(y_k, weights)
+
+        # print("rank_mu", rank_mu.shape)
+        rank_mu = jnp.sum(rank_mu, axis=0)
 
         cov = (
-            (1 - self._c_cov - self._c_1) * cov
-            + self._c_1
-            * (pp_c @ pp_c.T + (1 - tmp_1) * self._c_c * (2 - self._c_c) * cov)
-            + self._c_cov * cov_rank
+                (
+                    1
+                    + self._c_1 * delta_h_sigma
+                    - self._c_1
+                    - self._c_cov 
+                )
+                * cov
+                + self._c_1 * rank_one
+                + self._c_cov * rank_mu
         )
 
         # update step size
         sigma = sigma * jnp.exp(
-            (self._c_s / self._d_s) * (jnp.linalg.norm(p_s) / self._chi - 1)
+            (self._c_s / self._d_s) * (p_s_norm / self._chi - 1)
         )
 
-        cmaes_state = CMAESState(
+        cmaes_state = SepCMAESState(
             mean=mean,
-            cov_matrix=cov,
+            cov_vector=cov,
             sigma=sigma,
             num_updates=num_updates + 1,
             p_c=p_c,
             p_s=p_s,
             eigen_updates=eigen_updates,
-            eigenvalues=D2,
-            invsqrt_cov=invsqrt,
+            eigenvalues=eigenvalues,
+            D=D,
         )
 
         return cmaes_state
-
-    @partial(jax.jit, static_argnames=("self",))
-    def update(self, cmaes_state: CMAESState, samples: Genotype) -> CMAESState:
-        """Updates the distribution.
-
-        Args:
-            cmaes_state: current state of the algorithm
-            samples: a batch of genotypes
-
-        Returns:
-            an updated algorithm state
-        """
-
-        fitnesses = -self._fitness_function(samples)
-        idx_sorted = jnp.argsort(fitnesses)
-        sorted_candidates = samples[idx_sorted[: self._num_best]]
-
-        new_state = self.update_state(cmaes_state, sorted_candidates)
-
-        return new_state  # type: ignore
-
-    @partial(jax.jit, static_argnames=("self",))
-    def stop_condition(self, cmaes_state: CMAESState) -> bool:
-        """Determines if the current optimization path must be stopped.
-
-        A set of 5 conditions are computed, one condition is enough to
-        stop the process. This function does not stop the process but simply
-        retrieves the value. It is not called in the update function but can be
-        used to manually stopped the process (see example in CMA ME emitter).
-
-        Args:
-            cmaes_state: current CMAES state
-
-        Returns:
-            A boolean stating if the process should be stopped.
-        """
-
-        # NaN appears because of float precision is reached
-        nan_condition = jnp.sum(jnp.isnan(cmaes_state.eigenvalues)) > 0
-
-        eig_dispersion = jnp.max(cmaes_state.eigenvalues) / jnp.min(
-            cmaes_state.eigenvalues
-        )
-        first_condition = eig_dispersion > 1e14
-
-        area = cmaes_state.sigma * jnp.sqrt(jnp.max(cmaes_state.eigenvalues))
-        second_condition = area < 1e-11
-
-        third_condition = jnp.max(cmaes_state.eigenvalues) < 1e-7
-        fourth_condition = jnp.min(cmaes_state.eigenvalues) > 1e7
-
-        return (  # type: ignore
-            nan_condition
-            + first_condition
-            + second_condition
-            + third_condition
-            + fourth_condition
-        )

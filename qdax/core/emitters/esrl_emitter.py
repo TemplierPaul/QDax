@@ -55,15 +55,20 @@ class ESRLEmitterState(EmitterState):
         """Returns the metrics."""
         return self.es_state.metrics
     
+    # Metrics setter
     @metrics.setter
     def metrics(self, metrics: ESMetrics) -> None:
         """Sets the metrics."""
         self.es_state = self.es_state.replace(metrics=metrics)
 
+    def set_metrics(self, metrics: ESMetrics) -> None:
+        """Sets the metrics."""
+        es_state = self.es_state.replace(metrics=metrics)
+        return self.replace(es_state=es_state)
+
 class ESRLEmitter(Emitter):
     """
-    A policy gradient emitter used to implement the Policy Gradient Assisted MAP-Elites
-    (PGA-Map-Elites) algorithm.
+    A wrapper for 2 emitters: an ES emitter and a RL emitter.
     """
     def __init__(
         self,
@@ -72,7 +77,7 @@ class ESRLEmitter(Emitter):
         rl_emitter: QualityPGEmitter,
     ) -> None:
         
-        self.config = config
+        self._config = config
         self.es_emitter = es_emitter
         self.rl_emitter = rl_emitter
 
@@ -119,7 +124,8 @@ class ESRLEmitter(Emitter):
             fitness=-jnp.inf,
         )
 
-        state = ESRLEmitterState(es_state, rl_state, metrics)
+        state = ESRLEmitterState(es_state, rl_state)
+        state = state.set_metrics(metrics)
         state = state.set_key(random_key)
 
         return state, random_key
@@ -209,7 +215,7 @@ class ESRLEmitter(Emitter):
         # Choose between ES and RL update with probability 0.5
         # cond = jax.random.choice(key, 
         #                          jnp.array([True, False]), 
-        #                          p=jnp.array([self.config.es_proba, 1-self.config.es_proba]))
+        #                          p=jnp.array([self._config.es_proba, 1-self._config.es_proba]))
 
         # Do RL if the ES has done more steps than RL
         # cond = emitter_state.metrics.es_updates <= emitter_state.metrics.rl_updates
@@ -229,26 +235,32 @@ class ESRLEmitter(Emitter):
             extra_scores
         )
 
+        offspring = emitter_state.es_state.offspring
+
+        metrics = self.get_metrics(
+            emitter_state,
+            offspring,
+            extra_scores,
+            fitnesses,
+            evaluations=emitter_state.metrics.evaluations + self.es_emitter._config.sample_number,
+            random_key=key,
+        )
+
+        # Actor evaluation
         key, emitter_state = emitter_state.get_key()
 
         actor_genome = emitter_state.rl_state.actor_params
         actor_fitness, _ = self.multi_eval(actor_genome, key)
 
-        # es_center = emitter_state.es_state.offspring
-        # es_center_fitness, _ = self.multi_eval(genotypes, key)
-        center_fitness = jnp.mean(fitnesses)
-
-        metrics = emitter_state.metrics.replace(
+        metrics = metrics.replace(
             actor_fitness=actor_fitness,
-            center_fitness=center_fitness,
+            # center_fitness=center_fitness,
         )
 
-        emitter_state = emitter_state.replace(
+        return emitter_state.replace(
             metrics=metrics,
         )
 
-        return emitter_state
-    
     @partial(
         jax.jit,
         static_argnames=("self",),
@@ -337,30 +349,6 @@ class ESRLEmitter(Emitter):
             actor=emitter_state.rl_state.actor_params,
         )
 
-        center_fitness = jnp.mean(fitnesses)
-        metrics = emitter_state.metrics.replace(
-            center_fitness=center_fitness,
-            evaluations=emitter_state.metrics.evaluations + self._config.sample_number,
-        )
-
-        if "population_fitness" in extra_scores:
-            pop_mean = jnp.mean(extra_scores["population_fitness"])
-            pop_std = jnp.std(extra_scores["population_fitness"])
-            pop_min = jnp.min(extra_scores["population_fitness"])
-            pop_max = jnp.max(extra_scores["population_fitness"]) 
-            metrics = metrics.replace(
-                pop_mean=pop_mean,
-                pop_std=pop_std,
-                pop_min=pop_min,
-                pop_max=pop_max,
-            )
-
-        # Log sigma if using cmaes
-        if isinstance(emitter_state.es_state.optimizer_state, CMAESState):
-            metrics = metrics.replace(
-                sigma=emitter_state.es_state.optimizer_state.sigma,
-            )
-
         # Update ES emitter state
         es_state = emitter_state.es_state.replace(
             offspring=offspring,
@@ -374,6 +362,7 @@ class ESRLEmitter(Emitter):
         # Update random key
         rl_state = emitter_state.rl_state.replace(
             random_key=random_key,
+            es_center=genotypes,
         )
 
         rl_state = self.rl_emitter.state_update(
@@ -385,14 +374,23 @@ class ESRLEmitter(Emitter):
             extra_scores = extra_scores,
         )
 
-        metrics = ESMetrics(
+        metrics = self.es_emitter.get_metrics(
+            es_state,
+            offspring,
+            extra_scores,
+            fitnesses,
+            evaluations=emitter_state.metrics.evaluations + self._config.es_config.sample_number,
+            random_key=random_key,
+        )
+
+        metrics = metrics.replace(
             es_updates=emitter_state.metrics.es_updates + 1,
             rl_updates=emitter_state.metrics.rl_updates,
-            evaluations=emitter_state.metrics.evaluations + self.config.es_config.sample_number,
         )
         # Share random key between ES and RL emitters
 
-        state = ESRLEmitterState(es_state, rl_state, metrics)
+        state = ESRLEmitterState(es_state, rl_state)
+        state = state.set_metrics(metrics)
         state = state.set_key(random_key)
         return state
     
@@ -439,6 +437,7 @@ class ESRLEmitter(Emitter):
         # Update random key
         rl_state = emitter_state.rl_state.replace(
             random_key=random_key,
+            es_center=genotypes,
         )
 
         new_rl_state = self.rl_emitter.state_update(
@@ -472,7 +471,80 @@ class ESRLEmitter(Emitter):
             evaluations=emitter_state.metrics.evaluations,
         )
 
-        state = ESRLEmitterState(es_state, rl_state, metrics)
+        state = ESRLEmitterState(es_state, rl_state)
+        state = state.set_metrics(metrics)
         state = state.set_key(random_key)
         return state
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def get_metrics(
+            self, 
+            emitter_state: VanillaESEmitterState,
+            offspring: Genotype,
+            extra_scores: ExtraScores,
+            fitnesses: Fitness,
+            evaluations: int,
+            random_key: RNGKey,
+        ) -> ESMetrics:
+
+        metrics = emitter_state.metrics
+
+        # Log fitness from the center
+        center_fitness = jnp.mean(fitnesses)
+
+        metrics = metrics.replace(
+            center_fitness=center_fitness,
+            evaluations=evaluations,
+        )
+
+        # Population fitness stats
+        if "population_fitness" in extra_scores:
+            pop_mean = jnp.mean(extra_scores["population_fitness"])
+            pop_median = jnp.median(extra_scores["population_fitness"])
+            pop_std = jnp.std(extra_scores["population_fitness"])
+            pop_min = jnp.min(extra_scores["population_fitness"])
+            pop_max = jnp.max(extra_scores["population_fitness"]) 
+            metrics = metrics.replace(
+                pop_mean=pop_mean,
+                pop_median=pop_median,
+                pop_std=pop_std,
+                pop_min=pop_min,
+                pop_max=pop_max,
+            )
+        
+        # Evaluating offspring multiple time
+        multi_offspring = jax.tree_util.tree_map(
+            lambda x: jnp.repeat(x, self._config.es_config.sample_number, axis=0),
+            offspring,
+        )
+
+        off_fitnesses, _, _, random_key = self.es_emitter._scoring_fn(
+            multi_offspring, random_key
+        )
+         
+        metrics = metrics.replace(
+            center_mean=jnp.mean(off_fitnesses),
+            center_median=jnp.median(off_fitnesses),
+            center_std=jnp.std(off_fitnesses),
+            center_min=jnp.min(off_fitnesses),
+            center_max=jnp.max(off_fitnesses),
+        )
+
+        # Log sigma if using cmaes
+        if isinstance(emitter_state.es_state.optimizer_state, CMAESState):
+            metrics = metrics.replace(
+                sigma=emitter_state.es_state.optimizer_state.sigma,
+            )
+
+        if "eigen_change" in extra_scores:
+            metrics = metrics.replace(
+                eigen_change = extra_scores["eigen_change"],
+            )
+            
+            
+        
+        return metrics
 

@@ -308,23 +308,14 @@ class CanonicalESEmitter(VanillaESEmitter):
             optimizer_state=emitter_state.optimizer_state,
         )
 
-        center_fitness = jnp.mean(fitnesses)
-        metrics = emitter_state.metrics.replace(
-            center_fitness=center_fitness,
+        metrics = self.get_metrics(
+            emitter_state,
+            offspring,
+            extra_scores,
+            fitnesses,
             evaluations=emitter_state.metrics.evaluations + self._config.sample_number,
+            random_key=random_key,
         )
-
-        if "population_fitness" in extra_scores:
-            pop_mean = jnp.mean(extra_scores["population_fitness"])
-            pop_std = jnp.std(extra_scores["population_fitness"])
-            pop_min = jnp.min(extra_scores["population_fitness"])
-            pop_max = jnp.max(extra_scores["population_fitness"]) 
-            metrics = metrics.replace(
-                pop_mean=pop_mean,
-                pop_std=pop_std,
-                pop_min=pop_min,
-                pop_max=pop_max,
-            )
 
         return emitter_state.replace(  # type: ignore
             offspring=offspring,

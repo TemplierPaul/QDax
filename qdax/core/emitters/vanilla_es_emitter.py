@@ -130,6 +130,7 @@ class VanillaESConfig:
     l2_coefficient: float = 0.02
     novelty_nearest_neighbors: int = 10
     actor_injection: bool = False
+    nb_injections: int = 1
 
 
 class VanillaESEmitterState(EmitterState):
@@ -317,6 +318,39 @@ class VanillaESEmitter(Emitter):
         jax.jit,
         static_argnames=("self"),
     )
+    def _sample_cauchy(
+        self, 
+        parent: Genotype,
+        # total_sample_number: int,
+        random_key: RNGKey,
+    ) -> Tuple[Genotype, RNGKey]:
+        """Sample a batch of genotypes from the parent.
+
+        Args:
+            parent: the considered parent.
+            number: the number of genotypes to sample.
+            random_key
+
+        Returns:
+            The sampled noises and a new random_key.
+        """
+        random_key, subkey = jax.random.split(random_key)
+        total_sample_number = self._config.sample_number
+
+        sample_noise = jax.tree_util.tree_map(
+            lambda x: jax.random.cauchy(
+                key=subkey,
+                shape=jnp.repeat(x, total_sample_number, axis=0).shape,
+            ),
+            parent,
+        )
+
+        return sample_noise, random_key
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self"),
+    )
     def _sample_mirror(
         self, 
         parent: Genotype,
@@ -367,6 +401,7 @@ class VanillaESEmitter(Emitter):
         """
         Replace the last genotype of the sample_noise by the actor minus the parent.
         """
+        raise NotImplementedError
         # Get the noise that recreates the actor
         actor_noise = jax.tree_util.tree_map(
             lambda x, y: (x - y)/self._config.sample_sigma,
@@ -469,30 +504,14 @@ class VanillaESEmitter(Emitter):
             actor=genotypes,
         )
 
-
-        center_fitness = jnp.mean(fitnesses)
-        metrics = emitter_state.metrics.replace(
-            center_fitness=center_fitness,
+        metrics = self.get_metrics(
+            emitter_state,
+            offspring,
+            extra_scores,
+            fitnesses,
             evaluations=emitter_state.metrics.evaluations + self._config.sample_number,
+            random_key=random_key,
         )
-
-        if "population_fitness" in extra_scores:
-            pop_mean = jnp.mean(extra_scores["population_fitness"])
-            pop_std = jnp.std(extra_scores["population_fitness"])
-            pop_min = jnp.min(extra_scores["population_fitness"])
-            pop_max = jnp.max(extra_scores["population_fitness"]) 
-            metrics = metrics.replace(
-                pop_mean=pop_mean,
-                pop_std=pop_std,
-                pop_min=pop_min,
-                pop_max=pop_max,
-            )
-
-        # Log sigma if using cmaes
-        if isinstance(emitter_state.optimizer_state, CMAESState):
-            metrics = metrics.replace(
-                sigma=emitter_state.optimizer_state.sigma,
-            )
 
 
         return emitter_state.replace(  # type: ignore
@@ -503,3 +522,75 @@ class VanillaESEmitter(Emitter):
             random_key=random_key,
             metrics=metrics,
         )
+
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def get_metrics(
+            self, 
+            emitter_state: VanillaESEmitterState,
+            offspring: Genotype,
+            extra_scores: ExtraScores,
+            fitnesses: Fitness,
+            evaluations: int,
+            random_key: RNGKey,
+        ) -> ESMetrics:
+
+        metrics = emitter_state.metrics
+
+        # Log fitness from the center
+        center_fitness = jnp.mean(fitnesses)
+
+        metrics = metrics.replace(
+            center_fitness=center_fitness,
+            evaluations=evaluations,
+        )
+
+        # Population fitness stats
+        if "population_fitness" in extra_scores:
+            pop_mean = jnp.mean(extra_scores["population_fitness"])
+            pop_median = jnp.median(extra_scores["population_fitness"])
+            pop_std = jnp.std(extra_scores["population_fitness"])
+            pop_min = jnp.min(extra_scores["population_fitness"])
+            pop_max = jnp.max(extra_scores["population_fitness"]) 
+            metrics = metrics.replace(
+                pop_mean=pop_mean,
+                pop_median=pop_median,
+                pop_std=pop_std,
+                pop_min=pop_min,
+                pop_max=pop_max,
+            )
+        
+        # Evaluating offspring multiple time
+        multi_offspring = jax.tree_util.tree_map(
+            lambda x: jnp.repeat(x, self._config.sample_number, axis=0),
+            offspring,
+        )
+
+        off_fitnesses, _, _, random_key = self._scoring_fn(
+            multi_offspring, random_key
+        )
+         
+        metrics = metrics.replace(
+            center_mean=jnp.mean(off_fitnesses),
+            center_median=jnp.median(off_fitnesses),
+            center_std=jnp.std(off_fitnesses),
+            center_min=jnp.min(off_fitnesses),
+            center_max=jnp.max(off_fitnesses),
+        )
+
+        # Log sigma if using cmaes
+        if isinstance(emitter_state.optimizer_state, CMAESState):
+            metrics = metrics.replace(
+                sigma=emitter_state.optimizer_state.sigma,
+            )
+
+        if "eigen_change" in extra_scores:
+            # print(type(metrics))
+            metrics = metrics.replace(
+                eigen_change = extra_scores["eigen_change"],
+            )
+            
+        
+        return metrics

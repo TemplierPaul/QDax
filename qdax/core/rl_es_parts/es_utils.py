@@ -26,12 +26,27 @@ class ESMetrics:
     actor_fitness: Fitness = -jnp.inf
     center_fitness: Fitness = -jnp.inf
     fitness: Fitness = -jnp.inf
+    # Population metrics
     pop_mean: Fitness = -jnp.inf
+    pop_median: Fitness = -jnp.inf
     pop_std: Fitness = -jnp.inf
     pop_min: Fitness = -jnp.inf
     pop_max: Fitness = -jnp.inf
-    sigma: float = 0.0
-    
+    # Center multi evals metrics
+    center_mean: Fitness = -jnp.inf
+    center_median: Fitness = -jnp.inf
+    center_std: Fitness = -jnp.inf
+    center_min: Fitness = -jnp.inf
+    center_max: Fitness = -jnp.inf
+    # CMAES metrics
+    sigma: float = -jnp.inf
+    eigen_change: float = -jnp.inf
+    # Steps metrics
+    rl_step_norm: float = -jnp.inf
+    es_step_norm: float = -jnp.inf
+    cosine_similarity: float = -jnp.inf
+    shared_directions: float = -jnp.inf
+    actor_center_dist: float = -jnp.inf
 
 
 class ESRepertoire(MapElitesRepertoire):

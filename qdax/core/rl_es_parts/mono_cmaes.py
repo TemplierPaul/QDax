@@ -16,14 +16,6 @@ from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.emitters.emitter import Emitter, EmitterState
 from qdax.core.cmaes import CMAES, CMAESState
 
-@jax.jit
-def jax_cumsum(x):
-    _, cumsum = jax.lax.scan(
-        lambda c, y: (c + y, c + y), 
-        jnp.zeros_like(x), 
-        x)
-    return cumsum
-
 @dataclass
 class MonoCMAESConfig(VanillaESConfig):
     """Configuration for the CMAES with mono solution emitter."""
@@ -93,8 +85,16 @@ class MonoCMAESEmitter(VanillaESEmitter):
         self.split_indices = None
 
         # Actor injection not available yet
+        # if self._config.actor_injection:
+        #     raise NotImplementedError("Actor injection not available for CMAES yet.")
+
         if self._config.actor_injection:
-            raise NotImplementedError("Actor injection not available for CMAES yet.")
+            print(f"Doing actor injection x {self._config.nb_injections}")
+            self._actor_injection = self._inject_actor
+        else:
+            print("Not doing actor injection")
+            self._actor_injection = lambda x, a: x
+
 
     # @partial(
     #     jax.jit,
@@ -179,6 +179,39 @@ class MonoCMAESEmitter(VanillaESEmitter):
             ),
             random_key,
         )
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self"),
+    )
+    def _inject_actor(
+        self, 
+        samples: Genotype,
+        actor: Genotype,
+        # parent: Genotype,
+    ) -> Genotype:
+        """
+        Replace the last genotype of the samples by the actor minus the parent.
+        """
+
+        # print("Before injection", jax.tree_map(lambda x: x.shape, samples))
+
+        # Repeat actor
+        actor = jax.tree_util.tree_map(
+            lambda x: jnp.repeat(x[None, ...], self._config.nb_injections, axis=0),
+            actor,
+        )
+
+        # Replace the n last one, with n = self._config.nb_injections
+        samples = jax.tree_util.tree_map(
+            lambda x, y: jnp.concatenate([x[:-self._config.nb_injections], y], axis=0),
+            samples,
+            actor,
+        )
+
+        # print("After injection", jax.tree_map(lambda x: x.shape, samples))
+
+        return samples
 
     @partial(
         jax.jit,
@@ -249,11 +282,11 @@ class MonoCMAESEmitter(VanillaESEmitter):
     def _es_emitter(
         self,
         parent: Genotype,
-        optimizer_state: optax.OptState,
+        optimizer_state: CMAESState,
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
         actor: Genotype=None,
-    ) -> Tuple[Genotype, optax.OptState, RNGKey]:
+    ) -> Tuple[Genotype, CMAESState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
         the fitnesses and descriptors fo its es-samples, return its
         approximated-gradient-generated offspring.
@@ -267,6 +300,8 @@ class MonoCMAESEmitter(VanillaESEmitter):
         Returns:
             The approximated-gradients-generated offspring and a new random_key.
         """
+        old_eigen = optimizer_state.eigenvalues
+
         random_key, subkey = jax.random.split(random_key)
         # print("Parent", jax.tree_map(lambda x: x.shape, parent))
 
@@ -288,6 +323,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
         # Turn each sample into a network
         networks = jax.vmap(self.unflatten)(samples)
 
+        networks = self._actor_injection(networks, actor)
         # print("Population", jax.tree_map(lambda x: x.shape, networks))
         
         # print("networks", networks.shape)
@@ -311,6 +347,10 @@ class MonoCMAESEmitter(VanillaESEmitter):
         sorted_candidates = samples[idx_sorted[: self._cmaes._num_best]]
 
         new_cmaes_state = self._cmaes.update_state(optimizer_state, sorted_candidates)
+
+        new_eigen = new_cmaes_state.eigenvalues
+        # Norm of the eigenvalues change
+        extra_scores["eigen_change"] = jnp.linalg.norm(new_eigen - old_eigen)
 
         # print("CMA state updated")
 

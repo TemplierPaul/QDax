@@ -39,8 +39,11 @@ parser.add_argument('--novelty_nearest_neighbors', type=int, default=10, help='N
 
 # RL
 parser.add_argument('--rl', default=False, action="store_true", help='Add RL')
-parser.add_argument('--actor_injection', action="store_true", default=False, help='Use actor injection')
+parser.add_argument('--testrl', default=False, action="store_true", help='Add RL/ES testing')
 parser.add_argument('--carlies', default=False, action="store_true", help='Add CARLIES')
+parser.add_argument('--elastic_pull', type=float, default=0, help='Penalization for pulling the actor too far from the ES center')
+parser.add_argument('--actor_injection', action="store_true", default=False, help='Use actor injection')
+parser.add_argument('--nb_injections', type=int, default=1, help='Number of actors to inject if actor_injection is True')
 
 # File output
 parser.add_argument('--output', type=str, default='output', help='Output file')
@@ -60,9 +63,9 @@ parser.add_argument('--debug', default=False, action="store_true", help='Debug f
 # parse arguments
 args = parser.parse_args()
 
-if args.carlies:
+if args.carlies or args.testrl:
     args.rl = True
-    args.actor_injection = False
+    # args.actor_injection = False
 
 if args.debug:
     # Cheap ES to debug
@@ -98,10 +101,16 @@ if args.rl:
     if args.carlies:
         suffix = 'CARLIES'
     args.algo += f"-{suffix}"
-    if args.actor_injection:
-        args.algo += "-AI"
+
+if args.testrl:
+    args.algo += '-TestRL'
+
+if args.actor_injection:
+    args.algo += "-AI"
 
 args.config = f"ES {args.pop} - \u03C3 {args.es_sigma} - \u03B1 {args.learning_rate}"
+if args.elastic_pull > 0:
+    args.config += f" - \u03B5 {args.elastic_pull}" # \u03B5 is epsilon
 
 print("Parsed arguments:", args)
 
@@ -135,8 +144,10 @@ from qdax.core.rl_es_parts.mono_cmaes import MonoCMAESEmitter, MonoCMAESConfig
 from qdax.core.rl_es_parts.es_utils import ES, default_es_metrics, ESMetrics
 
 from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
+from qdax.core.emitters.elastic_qpg_emitter import ElasticQualityPGConfig, ElasticQualityPGEmitter
 
 from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitter
+from qdax.core.emitters.test_gradients import TestGradientsEmitter
 from qdax.core.emitters.carlies_emitter import CARLIES
 
 
@@ -220,7 +231,8 @@ if args.es in ["open", "openai"]:
         learning_rate=args.learning_rate,
         l2_coefficient=args.l2_coefficient,
         novelty_nearest_neighbors=args.novelty_nearest_neighbors,
-        actor_injection = False,
+        actor_injection = args.actor_injection,
+        nb_injections = args.nb_injections,
     )
 
     es_emitter = OpenESEmitter(
@@ -237,7 +249,8 @@ elif args.es in ["canonical"]:
         sample_sigma=args.es_sigma,
         learning_rate=args.learning_rate,
         novelty_nearest_neighbors=args.novelty_nearest_neighbors,
-        actor_injection = False,
+        actor_injection = args.actor_injection,
+        nb_injections = args.nb_injections,
     )
 
     es_emitter = CanonicalESEmitter(
@@ -252,7 +265,8 @@ elif args.es in ["cmaes"]:
         nses_emitter=args.nses_emitter,
         sample_number=args.pop,
         sample_sigma=args.es_sigma,
-        actor_injection = False,
+        actor_injection = args.actor_injection,
+        nb_injections = args.nb_injections,
     )
 
     es_emitter = MonoCMAESEmitter(
@@ -266,7 +280,8 @@ elif args.es in ["random"]:
     es_config = RandomConfig(
         nses_emitter=args.nses_emitter,
         sample_number=args.pop,
-        actor_injection = False,
+        actor_injection = args.actor_injection,
+        nb_injections = args.nb_injections,
     )
     
     es_emitter = RandomEmitter(
@@ -281,12 +296,41 @@ else:
 
 if args.rl:
     # ESRL emitter
-    emitter_type = ESRLEmitter
+    esrl_emitter_type = ESRLEmitter
     if args.carlies:
-        emitter_type = CARLIES
+        esrl_emitter_type = CARLIES
+    elif args.testrl:
+        esrl_emitter_type = TestGradientsEmitter
+    
+    # if args.elastic_pull == 0:
+    #     # QPG emitter
+    #     rl_config = QualityPGConfig(
+    #         env_batch_size = 100,
+    #         num_critic_training_steps = 1000,
+    #         num_pg_training_steps = 1000,
 
-    # QPG emitter
-    rl_config = QualityPGConfig(
+    #         # TD3 params
+    #         replay_buffer_size = 1000000,
+    #         critic_hidden_layer_size = (256, 256),
+    #         critic_learning_rate = 3e-4,
+    #         actor_learning_rate = 3e-4,
+    #         policy_learning_rate = 1e-3,
+    #         noise_clip = 0.5,
+    #         policy_noise = 0.2,
+    #         discount = 0.99,
+    #         reward_scaling = 1.0,
+    #         batch_size = 256,
+    #         soft_tau_update = 0.005,
+    #         policy_delay = 2,
+    #     )
+            
+    #     rl_emitter = QualityPGEmitter(
+    #         config=rl_config,
+    #         policy_network=policy_network,
+    #         env=env,
+    #     )
+    # else:
+    rl_config = ElasticQualityPGConfig(
         env_batch_size = 100,
         num_critic_training_steps = 1000,
         num_pg_training_steps = 1000,
@@ -303,14 +347,16 @@ if args.rl:
         reward_scaling = 1.0,
         batch_size = 256,
         soft_tau_update = 0.005,
-        policy_delay = 2
+        policy_delay = 2,
+        elastic_pull = args.elastic_pull,
     )
         
-    rl_emitter = QualityPGEmitter(
+    rl_emitter = ElasticQualityPGEmitter(
         config=rl_config,
         policy_network=policy_network,
         env=env,
     )
+    
 
     # RL-ES emitter
     esrl_config = ESRLConfig(
@@ -318,7 +364,7 @@ if args.rl:
         rl_config=rl_config,
     )
 
-    emitter = emitter_type(
+    emitter = esrl_emitter_type(
         config=esrl_config,
         es_emitter=es_emitter,
         rl_emitter=rl_emitter,
@@ -413,7 +459,7 @@ try:
             else:
                 all_metrics[key] = value
 
-                csv_logger.log(logged_metrics)
+        csv_logger.log(logged_metrics)  
         if wandb_run:
             wandb_run.log(logged_metrics)
 
@@ -423,6 +469,9 @@ try:
 except KeyboardInterrupt:
     print("Interrupted by user")
 
+# print(logged_metrics)
+for k, v in logged_metrics.items():
+    print(f"{k}: {v}")
 
 #################
 # Visualisation #
