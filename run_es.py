@@ -14,7 +14,8 @@ parser.add_argument('--episode_length', type=int, default=1000, help='Number of 
 # parser.add_argument('--gen', type=int, default=10000, help='Generations', dest='num_iterations')
 parser.add_argument('--evals', type=int, default=1000000, help='Evaluations')
 parser.add_argument('--seed', type=int, default=42, help='Random seed')
-parser.add_argument('--policy_hidden_layer_sizes', type=int, nargs='+', default=[128, 128], help='Policy network hidden layer sizes')
+parser.add_argument('--policy_hidden_layer_sizes', type=int, default=128, help='Policy network hidden layer sizes')
+parser.add_argument('--critic_hidden_layer_sizes', type=int, default=128, help='critic network hidden layer sizes')
 
 # Map-Elites
 parser.add_argument('--num_init_cvt_samples', type=int, default=50000, help='Number of samples to use for CVT initialization')
@@ -75,7 +76,7 @@ if args.debug:
         "pop": 10,
         'evals': 100,
         'seed': 42,
-        'policy_hidden_layer_sizes': (16, 16),
+        'policy_hidden_layer_sizes': 16,
         "output": "debug"
     }
     for k, v in debug_values.items():
@@ -85,7 +86,8 @@ log_period = args.log_period
 args.num_gens = args.evals // args.pop
 num_loops = int(args.num_gens / log_period)
 
-args.policy_hidden_layer_sizes = tuple(args.policy_hidden_layer_sizes)
+args.policy_hidden_layer_sizes = (args.policy_hidden_layer_sizes, args.policy_hidden_layer_sizes)
+args.critic_hidden_layer_sizes = (args.critic_hidden_layer_sizes, args.critic_hidden_layer_sizes)
 
 algos = {
     'open': 'OpenAI',
@@ -337,7 +339,7 @@ if args.rl:
 
         # TD3 params
         replay_buffer_size = 1000000,
-        critic_hidden_layer_size = (256, 256),
+        critic_hidden_layer_size = args.critic_hidden_layer_sizes,
         critic_learning_rate = 3e-4,
         actor_learning_rate = 3e-4,
         policy_learning_rate = 1e-3,
