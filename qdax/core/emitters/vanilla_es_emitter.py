@@ -149,6 +149,7 @@ class VanillaESEmitterState(EmitterState):
     novelty_archive: NoveltyArchive
     random_key: RNGKey
     optimizer_state: optax.OptState
+    initial_center: Genotype
     metrics: ESMetrics = ESMetrics()
 
 
@@ -252,6 +253,7 @@ class VanillaESEmitter(Emitter):
                 generation_count=0,
                 novelty_archive=novelty_archive,
                 random_key=random_key,
+                initial_center=init_genotypes,
                 metrics=metrics,
             ),
             random_key,
@@ -509,7 +511,6 @@ class VanillaESEmitter(Emitter):
             offspring,
             extra_scores,
             fitnesses,
-            evaluations=emitter_state.metrics.evaluations + self._config.sample_number,
             random_key=random_key,
         )
 
@@ -533,7 +534,7 @@ class VanillaESEmitter(Emitter):
             offspring: Genotype,
             extra_scores: ExtraScores,
             fitnesses: Fitness,
-            evaluations: int,
+            # evaluations: int,
             random_key: RNGKey,
         ) -> ESMetrics:
 
@@ -544,7 +545,7 @@ class VanillaESEmitter(Emitter):
 
         metrics = metrics.replace(
             center_fitness=center_fitness,
-            evaluations=evaluations,
+            evaluations=metrics.evaluations + self._config.sample_number,
         )
 
         # Population fitness stats

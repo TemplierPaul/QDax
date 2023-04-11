@@ -29,7 +29,7 @@ def flatten(network):
     return vect
 
 class TestGradientsEmitter(ESRLEmitter):
-    partial(
+    @partial(
         jax.jit,
         static_argnames=("self",),
     )
@@ -65,7 +65,6 @@ class TestGradientsEmitter(ESRLEmitter):
         old_offspring = emitter_state.es_state.offspring
         # To vector
         old_center = emitter_state.es_state.offspring
-        old_center = flatten(old_center)
 
         # Do ES update
         emitter_state = self.es_state_update(
@@ -80,9 +79,6 @@ class TestGradientsEmitter(ESRLEmitter):
         # Compute ES step
         # es_step = emitter_state.es_state.offspring - old_center
         new_center = emitter_state.es_state.offspring
-        new_center = flatten(new_center)
-
-        es_step = new_center - old_center
 
         key, emitter_state = emitter_state.get_key()
         
@@ -96,29 +92,14 @@ class TestGradientsEmitter(ESRLEmitter):
             emitter_state = rl_state,
             parents=old_offspring,
         )
-        rl_center = flatten(rl_center)
-
-        # Compute RL step
-        rl_step = rl_center - old_center
-
-        # Compute step norms
-        es_step_norm = jnp.linalg.norm(es_step)
-        rl_step_norm = jnp.linalg.norm(rl_step)
-        # Compute cosine similarity
-        cos_sim = jnp.dot(es_step, rl_step) / (es_step_norm * rl_step_norm)
-
-        # Compute the % of dimensions where the sign of the step is the same
-        es_sign = jnp.sign(es_step)
-        rl_sign = jnp.sign(rl_step)
-        same_sign = jnp.sum(es_sign == rl_sign) / len(es_sign)
 
         # Log
+        
         actor_genome = emitter_state.rl_state.actor_params
-        actor_fitness, _ = self.multi_eval(actor_genome, key)
-
         actor_genome = flatten(actor_genome)
+        new_center_genome = flatten(new_center)
         # Compute center - actor distance
-        actor_dist = jnp.linalg.norm(actor_genome - new_center)
+        actor_dist = jnp.linalg.norm(actor_genome - new_center_genome)
 
         offspring = emitter_state.es_state.offspring
 
@@ -127,19 +108,71 @@ class TestGradientsEmitter(ESRLEmitter):
             offspring,
             extra_scores,
             fitnesses,
-            evaluations=emitter_state.metrics.evaluations + self.es_emitter._config.sample_number,
+            # evaluations=emitter_state.metrics.evaluations,
             random_key=key,
+        )
+        
+        # Update metrics
+        angles = self.compute_angles(
+            g1=new_center,
+            g2=rl_center,
+            center=old_center,
         )
 
         metrics = metrics.replace(
-            actor_fitness=actor_fitness,
-            es_step_norm = es_step_norm,
-            rl_step_norm = rl_step_norm,
-            cosine_similarity = cos_sim,
             actor_center_dist = actor_dist,
-            shared_directions = same_sign,
+            es_step_norm = angles["v1_norm"],
+            rl_step_norm = angles["v2_norm"],
+            cosine_similarity = angles["cosine_similarity"],
+            shared_directions = angles["same_sign"],
+        )
+
+        # Stats since start
+        initial_center = emitter_state.es_state.initial_center
+        angles = self.compute_angles(
+            g1=new_center,
+            g2=rl_center,
+            center=initial_center,
+        )
+
+        metrics = metrics.replace(
+            es_dist = angles["v1_norm"],
+            rl_dist = angles["v2_norm"],
+            start_cos_sim = angles["cosine_similarity"],
         )
 
         emitter_state = emitter_state.set_metrics(metrics)
 
         return emitter_state
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def compute_angles(self, 
+        g1: Genotype,
+        g2: Genotype,
+        center: Genotype,
+    ) -> float:  
+        """Compute the cosine similarity between two vectors."""
+        g1 = flatten(g1)
+        g2 = flatten(g2)
+        center = flatten(center)
+        v1 = g1 - center
+        v2 = g2 - center
+
+        v1_norm = jnp.linalg.norm(v1)
+        v2_norm = jnp.linalg.norm(v2)
+        cos_sim = jnp.dot(v1, v2) / (v1_norm * v2_norm)
+
+        # Compute the % of dimensions where the sign of the step is the same
+        v1_sign = jnp.sign(v1)
+        v2_sign = jnp.sign(v2)
+        same_sign = jnp.sum(v1_sign == v2_sign) / len(v1_sign)
+
+        return {
+            "v1_norm": v1_norm,
+            "v2_norm": v2_norm,
+            "cosine_similarity": cos_sim,
+            "same_sign": same_sign,
+        }

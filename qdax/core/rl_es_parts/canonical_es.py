@@ -130,6 +130,7 @@ class CanonicalESEmitter(VanillaESEmitter):
                 generation_count=0,
                 novelty_archive=novelty_archive,
                 random_key=random_key,
+                initial_center=init_genotypes,
             ),
             random_key,
         )
@@ -313,7 +314,7 @@ class CanonicalESEmitter(VanillaESEmitter):
             offspring,
             extra_scores,
             fitnesses,
-            evaluations=emitter_state.metrics.evaluations + self._config.sample_number,
+            # evaluations=emitter_state.metrics.evaluations + self._config.sample_number,
             random_key=random_key,
         )
 

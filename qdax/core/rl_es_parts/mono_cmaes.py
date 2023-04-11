@@ -37,11 +37,6 @@ class MonoCMAESState(VanillaESEmitterState):
     """
 
     optimizer_state: CMAESState
-    offspring: Genotype
-    generation_count: int
-    novelty_archive: NoveltyArchive
-    random_key: RNGKey
-    metrics: ESMetrics
 
 
 class MonoCMAESEmitter(VanillaESEmitter):
@@ -175,6 +170,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
                 generation_count=0,
                 novelty_archive=novelty_archive,
                 random_key=random_key,
+                initial_center=init_genotypes,
                 metrics=metrics,
             ),
             random_key,

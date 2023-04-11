@@ -47,6 +47,10 @@ class ESMetrics:
     cosine_similarity: float = -jnp.inf
     shared_directions: float = -jnp.inf
     actor_center_dist: float = -jnp.inf
+    # Tracking how far we are from the initial center
+    es_dist: float = -jnp.inf
+    rl_dist: float = -jnp.inf
+    start_cos_sim: float = -jnp.inf
 
 
 class ESRepertoire(MapElitesRepertoire):

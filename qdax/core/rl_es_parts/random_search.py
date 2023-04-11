@@ -27,15 +27,6 @@ class RandomConfig(VanillaESConfig):
     sample_number: int = 1000
     sample_sigma: float = 0.02
 
-class RandomEmitterState(VanillaESEmitterState):
-    """State for the random search emitter."""
-
-    offspring: Genotype
-    generation_count: int
-    novelty_archive: NoveltyArchive
-    random_key: RNGKey
-    optimizer_state: optax.OptState = None # Not used by random search
-    metrics: ESMetrics = ESMetrics()
 
 class RandomEmitter(VanillaESEmitter):
     '''Random search emitter.'''
@@ -97,11 +88,13 @@ class RandomEmitter(VanillaESEmitter):
         )
 
         return (
-            RandomEmitterState(
+            VanillaESEmitterState(
                 offspring=init_genotypes,
                 generation_count=0,
                 novelty_archive=novelty_archive,
+                optimizer_state=None,
                 random_key=random_key,
+                initial_center=init_genotypes,
             ),
             random_key,
         )
