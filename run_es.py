@@ -51,6 +51,9 @@ parser.add_argument('--carlies', default=False, action="store_true", help='Add C
 parser.add_argument('--elastic_pull', type=float, default=0, help='Penalization for pulling the actor too far from the ES center')
 parser.add_argument('--actor_injection', action="store_true", default=False, help='Use actor injection')
 parser.add_argument('--nb_injections', type=int, default=1, help='Number of actors to inject if actor_injection is True')
+parser.add_argument('--critic_training', type=int, default=1000, help='Number of critic training steps')
+parser.add_argument('--pg_training', type=int, default=1000, help='Number of PG training steps')
+
 
 # File output
 parser.add_argument('--output', type=str, default='output', help='Output file')
@@ -339,8 +342,8 @@ if args.rl:
     # else:
     rl_config = ElasticQualityPGConfig(
         env_batch_size = 100,
-        num_critic_training_steps = 1000,
-        num_pg_training_steps = 1000,
+        num_critic_training_steps = args.critic_training,
+        num_pg_training_steps = args.pg_training,
 
         # TD3 params
         replay_buffer_size = 1000000,
