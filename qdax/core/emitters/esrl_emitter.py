@@ -20,7 +20,7 @@ from qdax.core.emitters.vanilla_es_emitter import VanillaESConfig, VanillaESEmit
 from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
 from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.cmaes import CMAESState
-
+from jax.flatten_util import ravel_pytree
 
 @dataclass
 class ESRLConfig:
@@ -65,6 +65,11 @@ class ESRLEmitterState(EmitterState):
         """Sets the metrics."""
         es_state = self.es_state.replace(metrics=metrics)
         return self.replace(es_state=es_state)
+
+    def save(self, path):
+        """Saves the state to a file."""
+        self.es_state.save(path)
+        self.rl_state.save(path)
 
 class ESRLEmitter(Emitter):
     """
@@ -565,4 +570,3 @@ class ESRLEmitter(Emitter):
         )
         
         return metrics
-

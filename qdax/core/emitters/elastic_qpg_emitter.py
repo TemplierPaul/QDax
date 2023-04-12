@@ -18,12 +18,24 @@ from qdax.types import Descriptor, ExtraScores, Fitness, Genotype, Params, RNGKe
 
 from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
 
+from qdax.core.emitters.vanilla_es_emitter import flatten_genotype
+
 @dataclass
 class ElasticQualityPGConfig(QualityPGConfig):
     elastic_pull: float = 0.01
 
 class ElasticQualityPGEmitterState(QualityPGEmitterState):
     es_center: Params
+
+    def save(self, path):
+        """Saves the state to a file."""
+        flat_genotypes = flatten_genotype(self.actor_params)
+        jnp.save(path + "_actor.npy", flat_genotypes)
+        print("Saved actor to " + path + "_actor.npy")
+
+        flat_genotypes = flatten_genotype(self.critic_params)
+        jnp.save(path + "_critic.npy", flat_genotypes)
+        print("Saved critic to " + path + "_critic.npy")
 
 
 class ElasticQualityPGEmitter(Emitter):

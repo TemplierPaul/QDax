@@ -56,7 +56,7 @@ parser.add_argument('--pg_training', type=int, default=1000, help='Number of PG 
 
 
 # File output
-parser.add_argument('--output', type=str, default='output', help='Output file')
+parser.add_argument('--output', type=str, default='', help='Output file')
 parser.add_argument('--plot', default=False, action="store_true", help='Make plots')
 
 # Wandb
@@ -434,6 +434,12 @@ csv_logger = CSVLogger(
 )
 all_metrics: Dict[str, float] = {}
 
+# Save args dict
+if args.output != "":
+    import json
+    with open(args.output + "_config.json", "w") as file:
+        json.dump(args.__dict__, file, indent=4)
+
 # main loop
 es_scan_update = es.scan_update
 
@@ -478,6 +484,12 @@ try:
         bar.set_description(f"Gen: {gen}, qd_score: {logged_metrics['qd_score']:.2f}, max_fitness: {logged_metrics['max_fitness']:.2f}, coverage: {logged_metrics['coverage']:.2f}, time: {timelapse:.2f}")
 except KeyboardInterrupt:
     print("Interrupted by user")
+finally:
+    # Save
+    if args.output != "":
+        output = args.output
+        print("Saving to", output)
+        emitter_state.save(output)
 
 # print(logged_metrics)
 for k, v in logged_metrics.items():

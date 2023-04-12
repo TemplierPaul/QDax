@@ -18,6 +18,11 @@ from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.emitters.emitter import Emitter, EmitterState
 from qdax.types import Descriptor, ExtraScores, Fitness, Genotype, RNGKey
 from qdax.core.cmaes import CMAESState
+from jax.flatten_util import ravel_pytree
+
+def flatten_genotype(genotype: Genotype) -> jnp.ndarray:
+        flatten_genotype, _ = ravel_pytree(genotype)
+        return flatten_genotype
 
 class NoveltyArchive(flax.struct.PyTreeNode):
     """Novelty Archive used by NS-ES.
@@ -152,6 +157,13 @@ class VanillaESEmitterState(EmitterState):
     initial_center: Genotype
     metrics: ESMetrics = ESMetrics()
 
+    def save(self, path):
+        """Saves the state to a file."""
+        flat_genotypes = flatten_genotype(self.offspring)
+        jnp.save(path + "offspring.npy", flat_genotypes)
+        print("Saved offspring to", path + "_offspring.npy")
+
+        
 
 class VanillaESEmitter(Emitter):
     """
