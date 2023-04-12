@@ -53,6 +53,7 @@ class CanonicalESEmitterState(EmitterState):
     novelty_archive: NoveltyArchive
     random_key: RNGKey
     optimizer_state: optax.OptState = None # Not used by canonical ES
+    initial_center: Genotype = None
     metrics: ESMetrics = ESMetrics()
 
 
@@ -167,7 +168,7 @@ class CanonicalESEmitter(VanillaESEmitter):
         sample_number = self._config.sample_number if not self._config.actor_injection else self._config.sample_number - 1
 
         # Sampling noise
-        sample_number = sample_number 
+        # sample_number = sample_number 
         sample_noise = jax.tree_map(
             lambda x: jax.random.normal(
                 key=subkey,
