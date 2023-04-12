@@ -16,6 +16,7 @@ from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.emitters.emitter import Emitter, EmitterState
 from qdax.core.cmaes import CMAES, CMAESState
 
+
 @dataclass
 class MonoCMAESConfig(VanillaESConfig):
     """Configuration for the CMAES with mono solution emitter."""
@@ -161,7 +162,6 @@ class MonoCMAESEmitter(VanillaESEmitter):
             evaluations=0,
             actor_fitness=-jnp.inf,
             center_fitness=-jnp.inf,
-            fitness=-jnp.inf,
         )
 
         return (
@@ -343,7 +343,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
             genotypes = networks,
             fitnesses = scores,
             )
-        extra_scores["canonical_update"] = canonical_update
+        extra_scores["canonical_update"] = (parent, canonical_update)
 
 
         # Sort samples by scores (descending order)
@@ -351,7 +351,9 @@ class MonoCMAESEmitter(VanillaESEmitter):
 
         sorted_candidates = samples[idx_sorted[: self._cmaes._num_best]]
 
-        new_cmaes_state = self._cmaes.update_state(optimizer_state, sorted_candidates)
+        new_cmaes_state = self._cmaes.update_state(
+            optimizer_state, 
+            sorted_candidates)
 
         new_eigen = new_cmaes_state.eigenvalues
         # Norm of the eigenvalues change
@@ -376,7 +378,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
 
     @partial(
         jax.jit,
-        static_argnames=("self", "scores_fn"),
+        static_argnames=("self"),
     )
     def _canonical_update(self, 
         parent: Genotype,
@@ -388,11 +390,13 @@ class MonoCMAESEmitter(VanillaESEmitter):
         their fitnesses.
         """
 
+        # print("Canonical update simulation")
+
         ranking_indices = jnp.argsort(fitnesses, axis=0) 
         ranks = jnp.argsort(ranking_indices, axis=0) 
         ranks = self._config.sample_number - ranks # Inverting the ranks
         
-        mu = self._config.canonical_mu # Number of parents
+        mu = self._cmaes._num_best # Number of parents
 
         weights = jnp.where(ranks <= mu, jnp.log(mu+0.5) - jnp.log(ranks), 0) 
         weights /= jnp.sum(weights) # Normalizing the weights
@@ -436,3 +440,85 @@ class MonoCMAESEmitter(VanillaESEmitter):
         offspring = optax.apply_updates(parent, gradient)
 
         return offspring
+
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def get_metrics(
+            self, 
+            emitter_state: VanillaESEmitterState,
+            offspring: Genotype,
+            extra_scores: ExtraScores,
+            fitnesses: Fitness,
+            # evaluations: int,
+            random_key: RNGKey,
+        ) -> ESMetrics:
+
+        # Super
+        metrics = super().get_metrics(
+            emitter_state=emitter_state,
+            offspring=offspring,
+            extra_scores=extra_scores,
+            fitnesses=fitnesses,
+            random_key=random_key,
+        )
+
+        metrics = metrics.replace(
+            sigma=emitter_state.optimizer_state.sigma,
+        )
+
+        if "eigen_change" in extra_scores:
+            # print(type(metrics))
+            metrics = metrics.replace(
+                eigen_change = extra_scores["eigen_change"],
+            )
+
+        if "canonical_update" in extra_scores:
+            parent, canonical_update = extra_scores["canonical_update"]
+            angles = self.compute_angles(
+                g1=offspring,
+                g2=canonical_update,
+                center=parent,
+            )
+
+            metrics = metrics.replace(
+                cma_canonical_cosine = angles["cosine_similarity"],
+                cma_canonical_sign = angles["same_sign"],
+                # cma_norm = angles["v1_norm"],
+                canonical_step_norm = angles["v2_norm"]
+            )
+        return metrics
+            
+
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def compute_angles(self, 
+        g1: Genotype,
+        g2: Genotype,
+        center: Genotype,
+    ) -> float:  
+        """Compute the cosine similarity between two vectors."""
+        g1 = self.flatten(g1)
+        g2 = self.flatten(g2)
+        center = self.flatten(center)
+        v1 = g1 - center
+        v2 = g2 - center
+
+        v1_norm = jnp.linalg.norm(v1)
+        v2_norm = jnp.linalg.norm(v2)
+        cos_sim = jnp.dot(v1, v2) / (v1_norm * v2_norm)
+
+        # Compute the % of dimensions where the sign of the step is the same
+        v1_sign = jnp.sign(v1)
+        v2_sign = jnp.sign(v2)
+        same_sign = jnp.sum(v1_sign == v2_sign) / len(v1_sign)
+
+        return {
+            "v1_norm": v1_norm,
+            "v2_norm": v2_norm,
+            "cosine_similarity": cos_sim,
+            "same_sign": same_sign,
+        }

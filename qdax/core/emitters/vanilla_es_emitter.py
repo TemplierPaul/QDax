@@ -243,7 +243,6 @@ class VanillaESEmitter(Emitter):
             evaluations=0,
             actor_fitness=-jnp.inf,
             center_fitness=-jnp.inf,
-            fitness=-jnp.inf,
         )
 
         return (
@@ -580,18 +579,5 @@ class VanillaESEmitter(Emitter):
             center_min=jnp.min(off_fitnesses),
             center_max=jnp.max(off_fitnesses),
         )
-
-        # Log sigma if using cmaes
-        if isinstance(emitter_state.optimizer_state, CMAESState):
-            metrics = metrics.replace(
-                sigma=emitter_state.optimizer_state.sigma,
-            )
-
-        if "eigen_change" in extra_scores:
-            # print(type(metrics))
-            metrics = metrics.replace(
-                eigen_change = extra_scores["eigen_change"],
-            )
-            
         
         return metrics

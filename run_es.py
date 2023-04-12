@@ -1,4 +1,10 @@
 import argparse
+import os
+try:
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION']
+except KeyError:
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '1'
+print("XLA memory", os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'])
 
 # Argparse
 parser = argparse.ArgumentParser()
@@ -75,7 +81,6 @@ if args.debug:
         'episode_length': 100,
         "pop": 10,
         'evals': 100,
-        'seed': 42,
         'policy_hidden_layer_sizes': 16,
         "output": "debug"
     }

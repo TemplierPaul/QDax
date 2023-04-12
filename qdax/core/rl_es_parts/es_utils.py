@@ -25,7 +25,7 @@ class ESMetrics:
     evaluations: int=0
     actor_fitness: Fitness = -jnp.inf
     center_fitness: Fitness = -jnp.inf
-    fitness: Fitness = -jnp.inf
+    # fitness: Fitness = -jnp.inf
     # Population metrics
     pop_mean: Fitness = -jnp.inf
     pop_median: Fitness = -jnp.inf
@@ -41,17 +41,28 @@ class ESMetrics:
     # CMAES metrics
     sigma: float = -jnp.inf
     eigen_change: float = -jnp.inf
-    # Steps metrics
+
+    ## ES + RL
+    # Step size metrics
     rl_step_norm: float = -jnp.inf
     es_step_norm: float = -jnp.inf
-    cosine_similarity: float = -jnp.inf
-    shared_directions: float = -jnp.inf
-    actor_center_dist: float = -jnp.inf
+    # RL - ES metrics
+    es_rl_cosine: float = -jnp.inf
+    es_rl_sign: float = -jnp.inf
+    actor_es_dist: float = -jnp.inf
     # Tracking how far we are from the initial center
     es_dist: float = -jnp.inf
     rl_dist: float = -jnp.inf
     start_cos_sim: float = -jnp.inf
-
+    
+    ## Canonical in CMAES
+    canonical_step_norm: float = -jnp.inf
+    # CMAES - Canonical metrics
+    cma_canonical_cosine: float = -jnp.inf
+    cma_canonical_sign: float = -jnp.inf
+    # RL - Canonical metrics
+    canonical_rl_cosine: float = -jnp.inf
+    canonical_rl_sign: float = -jnp.inf
 
 class ESRepertoire(MapElitesRepertoire):
     """ A MapElitesRepertoire for ES that keeps the fitness of the last added ES center for logging

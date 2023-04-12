@@ -67,7 +67,7 @@ class TestGradientsEmitter(ESRLEmitter):
         old_center = emitter_state.es_state.offspring
 
         # Do ES update
-        emitter_state = self.es_state_update(
+        emitter_state, pop_extra_scores = self.es_state_update(
             emitter_state,
             repertoire,
             genotypes,
@@ -94,25 +94,24 @@ class TestGradientsEmitter(ESRLEmitter):
         )
 
         # Log
-        
-        actor_genome = emitter_state.rl_state.actor_params
-        actor_genome = flatten(actor_genome)
-        new_center_genome = flatten(new_center)
-        # Compute center - actor distance
-        actor_dist = jnp.linalg.norm(actor_genome - new_center_genome)
 
         offspring = emitter_state.es_state.offspring
 
         metrics = self.get_metrics(
             emitter_state,
             offspring,
-            extra_scores,
+            pop_extra_scores,
             fitnesses,
             # evaluations=emitter_state.metrics.evaluations,
             random_key=key,
         )
         
-        # Update metrics
+        # ES - RL
+        actor_genome = emitter_state.rl_state.actor_params
+        actor_genome = flatten(actor_genome)
+        new_center_genome = flatten(new_center)
+        actor_dist = jnp.linalg.norm(actor_genome - new_center_genome)
+
         angles = self.compute_angles(
             g1=new_center,
             g2=rl_center,
@@ -120,11 +119,11 @@ class TestGradientsEmitter(ESRLEmitter):
         )
 
         metrics = metrics.replace(
-            actor_center_dist = actor_dist,
+            actor_es_dist = actor_dist,
             es_step_norm = angles["v1_norm"],
             rl_step_norm = angles["v2_norm"],
-            cosine_similarity = angles["cosine_similarity"],
-            shared_directions = angles["same_sign"],
+            es_rl_cosine = angles["cosine_similarity"],
+            es_rl_sign = angles["same_sign"],
         )
 
         # Stats since start
@@ -140,6 +139,23 @@ class TestGradientsEmitter(ESRLEmitter):
             rl_dist = angles["v2_norm"],
             start_cos_sim = angles["cosine_similarity"],
         )
+
+        # Canonical - RL
+
+        if "canonical_update" in pop_extra_scores:
+            _, canonical_update = pop_extra_scores["canonical_update"]
+            angles = self.compute_angles(
+                g1=canonical_update,
+                g2=rl_center,
+                center=old_center,
+            )
+
+            metrics = metrics.replace(
+                canonical_step_norm = angles["v1_norm"],
+                rl_step_norm = angles["v2_norm"],
+                canonical_rl_cosine = angles["cosine_similarity"],
+                canonical_rl_sign = angles["same_sign"],
+            )
 
         emitter_state = emitter_state.set_metrics(metrics)
 

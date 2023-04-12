@@ -121,7 +121,6 @@ class ESRLEmitter(Emitter):
             evaluations=0,
             actor_fitness=-jnp.inf,
             center_fitness=-jnp.inf,
-            fitness=-jnp.inf,
         )
 
         state = ESRLEmitterState(es_state, rl_state)
@@ -222,7 +221,7 @@ class ESRLEmitter(Emitter):
 
         cond = self.choose_es_update(emitter_state, fitnesses, descriptors, extra_scores)
 
-        emitter_state = jax.lax.cond(
+        emitter_state, pop_extra_scores = jax.lax.cond(
             cond,
             self.es_state_update,
             self.rl_state_update,
@@ -240,7 +239,7 @@ class ESRLEmitter(Emitter):
         metrics = self.get_metrics(
             emitter_state,
             offspring,
-            extra_scores,
+            pop_extra_scores,
             fitnesses,
             # evaluations=emitter_state.metrics.evaluations + self.es_emitter._config.sample_number,
             random_key=key,
@@ -392,7 +391,7 @@ class ESRLEmitter(Emitter):
         state = ESRLEmitterState(es_state, rl_state)
         state = state.set_metrics(metrics)
         state = state.set_key(random_key)
-        return state
+        return state, extra_scores
     
     @partial(
         jax.jit,
@@ -479,7 +478,7 @@ class ESRLEmitter(Emitter):
         state = ESRLEmitterState(es_state, rl_state)
         state = state.set_metrics(metrics)
         state = state.set_key(random_key)
-        return state
+        return state, extra_scores
     
     @partial(
         jax.jit,
