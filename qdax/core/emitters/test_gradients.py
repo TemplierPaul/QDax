@@ -22,11 +22,14 @@ from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterStat
 from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.cmaes import CMAESState
 from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitterState, ESRLEmitter
- 
-def flatten(network):
-    flat_variables, _ = tree_flatten(network)
-    vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
-    return vect
+from jax.tree_util import tree_flatten, tree_unflatten, tree_map
+
+
+def flatten_genotype(genotype: Genotype) -> jnp.ndarray:
+        flat_variables, _ = tree_flatten(genotype)
+        # print("Flatten", flat_variables)
+        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
+        return vect
 
 class TestGradientsEmitter(ESRLEmitter):
     @partial(
@@ -108,8 +111,8 @@ class TestGradientsEmitter(ESRLEmitter):
         
         # ES - RL
         actor_genome = emitter_state.rl_state.actor_params
-        actor_genome = flatten(actor_genome)
-        new_center_genome = flatten(new_center)
+        actor_genome = flatten_genotype(actor_genome)
+        new_center_genome = flatten_genotype(new_center)
         actor_dist = jnp.linalg.norm(actor_genome - new_center_genome)
 
         angles = self.compute_angles(
@@ -171,9 +174,9 @@ class TestGradientsEmitter(ESRLEmitter):
         center: Genotype,
     ) -> float:  
         """Compute the cosine similarity between two vectors."""
-        g1 = flatten(g1)
-        g2 = flatten(g2)
-        center = flatten(center)
+        g1 = flatten_genotype(g1)
+        g2 = flatten_genotype(g2)
+        center = flatten_genotype(center)
         v1 = g1 - center
         v2 = g2 - center
 

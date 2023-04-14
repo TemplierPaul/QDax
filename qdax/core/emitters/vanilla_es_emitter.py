@@ -19,10 +19,15 @@ from qdax.core.emitters.emitter import Emitter, EmitterState
 from qdax.types import Descriptor, ExtraScores, Fitness, Genotype, RNGKey
 from qdax.core.cmaes import CMAESState
 from jax.flatten_util import ravel_pytree
+from jax.tree_util import tree_flatten, tree_unflatten, tree_map
+
 
 def flatten_genotype(genotype: Genotype) -> jnp.ndarray:
-        flatten_genotype, _ = ravel_pytree(genotype)
-        return flatten_genotype
+        flat_variables, _ = tree_flatten(genotype)
+        # print("Flatten", flat_variables)
+        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
+        return vect
+
 
 class NoveltyArchive(flax.struct.PyTreeNode):
     """Novelty Archive used by NS-ES.

@@ -41,6 +41,7 @@ class ESMetrics:
     # CMAES metrics
     sigma: float = -jnp.inf
     eigen_change: float = -jnp.inf
+    injection_norm: float = -jnp.inf
 
     ## ES + RL
     # Step size metrics

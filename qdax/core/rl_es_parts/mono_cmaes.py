@@ -16,6 +16,13 @@ from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.emitters.emitter import Emitter, EmitterState
 from qdax.core.cmaes import CMAES, CMAESState
 
+# @partial(
+#         jax.jit,
+#         static_argnames=("c","x"),
+#     )
+# def alpha_clip(c, x):
+#     return jnp.min([1, c/x])
+
 
 @dataclass
 class MonoCMAESConfig(VanillaESConfig):
@@ -77,6 +84,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
         
         # define a CMAES instance
         self._cmaes = None
+        self.c_y = None
         self.tree_def = None
         self.layer_sizes = None
         self.split_indices = None
@@ -90,7 +98,11 @@ class MonoCMAESEmitter(VanillaESEmitter):
             self._actor_injection = self._inject_actor
         else:
             print("Not doing actor injection")
-            self._actor_injection = lambda x, a: x
+            def no_injection(samples, actor, invsqrt_cov):
+                networks = jax.vmap(self.unflatten)(samples)
+                norm = -jnp.inf
+                return samples, networks, norm
+            self._actor_injection = no_injection
 
 
     # @partial(
@@ -151,6 +163,11 @@ class MonoCMAESEmitter(VanillaESEmitter):
             delay_eigen_decomposition=True,
         )
 
+        # Scaling for injection
+        n = genotype_dim
+        # sqrt(n) + 2n/(n + 2)
+        self.c_y = jnp.sqrt(n) + 2 * n / (n + 2)
+
         # Create empty Novelty archive
         novelty_archive = NoveltyArchive.init(
             self._total_generations, self._num_descriptors
@@ -185,13 +202,16 @@ class MonoCMAESEmitter(VanillaESEmitter):
         self, 
         samples: Genotype,
         actor: Genotype,
-        # parent: Genotype,
+        invsqrt_cov: jnp.ndarray,
     ) -> Genotype:
         """
         Replace the last genotype of the samples by the actor minus the parent.
         """
 
-        # print("Before injection", jax.tree_map(lambda x: x.shape, samples))
+        # Population networks
+        networks = jax.vmap(self.unflatten)(samples)
+
+        print("Before injection", jax.tree_map(lambda x: x.shape, networks))
 
         # Repeat actor
         actor = jax.tree_util.tree_map(
@@ -200,15 +220,32 @@ class MonoCMAESEmitter(VanillaESEmitter):
         )
 
         # Replace the n last one, with n = self._config.nb_injections
-        samples = jax.tree_util.tree_map(
+        networks = jax.tree_util.tree_map(
             lambda x, y: jnp.concatenate([x[:-self._config.nb_injections], y], axis=0),
-            samples,
+            networks,
             actor,
         )
 
-        # print("After injection", jax.tree_map(lambda x: x.shape, samples))
+        print("After injection", jax.tree_map(lambda x: x.shape, networks))
 
-        return samples
+        # Get actor genome
+        actor_genome = self.flatten(actor)
+
+        ## Scale the actor genome
+        # Injecting External Solutions Into CMA-ES, https://arxiv.org/pdf/1110.4181.pdf
+        Cy = invsqrt_cov @ actor_genome
+        # Get normalizing factor
+        norm = jnp.linalg.norm(Cy)
+        # alpha clip self.c_y / norm to 1
+        norm = jnp.minimum(1, self.c_y / norm)
+        actor_genome = norm * actor_genome
+
+        # Replace the n last one, with n = self._config.nb_injections
+        samples = samples.at[-self._config.nb_injections:].set(actor_genome)
+        print("After injection", samples.shape)
+
+
+        return samples, networks, norm
 
     @partial(
         jax.jit,
@@ -318,17 +355,18 @@ class MonoCMAESEmitter(VanillaESEmitter):
         # print("samples", samples.shape)
         
         # Turn each sample into a network
-        networks = jax.vmap(self.unflatten)(samples)
-
-        networks = self._actor_injection(networks, actor)
+        # networks = jax.vmap(self.unflatten)(samples)
+        invsqrt_cov = optimizer_state.invsqrt_cov
+        samples, networks, norm_factor = self._actor_injection(samples, actor, invsqrt_cov)
         # print("Population", jax.tree_map(lambda x: x.shape, networks))
-        
         # print("networks", networks.shape)
         
         # Evaluating samples
         fitnesses, descriptors, extra_scores, random_key = self._scoring_fn(
             networks, random_key
         )
+
+        extra_scores["injection_norm"] = norm_factor
 
         extra_scores["population_fitness"] = fitnesses
 
@@ -338,12 +376,12 @@ class MonoCMAESEmitter(VanillaESEmitter):
         # print("scores", scores.shape)
 
         # Compute the canonical update
-        canonical_update = self._canonical_update(
-            parent = parent,
-            genotypes = networks,
-            fitnesses = scores,
-            )
-        extra_scores["canonical_update"] = (parent, canonical_update)
+        # canonical_update = self._canonical_update(
+        #     parent = parent,
+        #     genotypes = networks,
+        #     fitnesses = scores,
+        #     )
+        # extra_scores["canonical_update"] = (parent, canonical_update)
 
 
         # Sort samples by scores (descending order)
@@ -472,6 +510,11 @@ class MonoCMAESEmitter(VanillaESEmitter):
             # print(type(metrics))
             metrics = metrics.replace(
                 eigen_change = extra_scores["eigen_change"],
+            )
+        
+        if "injection_norm" in extra_scores:
+            metrics = metrics.replace(
+                injection_norm = extra_scores["injection_norm"],
             )
 
         if "canonical_update" in extra_scores:
