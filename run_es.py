@@ -69,6 +69,7 @@ parser.add_argument('--log_period', type=int, default=1, help='Log period')
 
 # Debug flag 
 parser.add_argument('--debug', default=False, action="store_true", help='Debug flag')
+parser.add_argument('--logall', default=False, action="store_true", help='Lot at each generation')
 
 # parse arguments
 args = parser.parse_args()
@@ -410,18 +411,24 @@ print(es_emitter)
 
 #######
 # Run #
+if args.output != "":
+    import os
 
-log_file = args.output
-if not log_file.endswith(".csv"):
-    log_file += ".csv"
+    directory = args.output
 
-# create log file
-with open(log_file, "w+") as file:
-    pass
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+        print(f"Directory '{directory}' created successfully!")
+    else:
+        print(f"Directory '{directory}' already exists!")
 
-plot_file = args.output
-if not plot_file.endswith(".png"):
-    plot_file += ".png"
+
+    plot_file = args.output + "/plot.png"
+    log_file = args.output + "/log.csv"
+
+    import json
+    with open(args.output + "/config.json", "w") as file:
+        json.dump(args.__dict__, file, indent=4)
 
 # get all the fields in ESMetrics
 header = ESMetrics.__dataclass_fields__.keys()
@@ -433,12 +440,6 @@ csv_logger = CSVLogger(
             "time", "frames"] + list(header),
 )
 all_metrics: Dict[str, float] = {}
-
-# Save args dict
-if args.output != "":
-    import json
-    with open(args.output + "_config.json", "w") as file:
-        json.dump(args.__dict__, file, indent=4)
 
 # main loop
 es_scan_update = es.scan_update
@@ -479,6 +480,10 @@ try:
         if wandb_run:
             wandb_run.log(logged_metrics)
 
+        if args.logall and args.output != "":
+            output = args.output + "/gen_" + str(gen)
+            print("Saving to", output)
+            emitter_state.save(output)
 
         # Update bar
         bar.set_description(f"Gen: {gen}, qd_score: {logged_metrics['qd_score']:.2f}, max_fitness: {logged_metrics['max_fitness']:.2f}, coverage: {logged_metrics['coverage']:.2f}, time: {timelapse:.2f}")
@@ -487,7 +492,7 @@ except KeyboardInterrupt:
 finally:
     # Save
     if args.output != "":
-        output = args.output
+        output = args.output + "/gen_" + str(gen)
         print("Saving to", output)
         emitter_state.save(output)
 

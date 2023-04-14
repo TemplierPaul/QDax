@@ -361,38 +361,3 @@ def default_es_metrics(repertoire: ESRepertoire, emitter_state: EmitterState, qd
     # Merge
     metrics.update(archive_metrics)
     return metrics
-
-# def esrl_metrics(repertoire: ESRepertoire, emitter_state: EmitterState, qd_offset: float) -> Metrics:
-#     """Compute the usual QD metrics that one can retrieve
-#     from a MAP Elites repertoire.
-
-#     Args:
-#         repertoire: a MAP-Elites repertoire
-#         qd_offset: an offset used to ensure that the QD score
-#             will be positive and increasing with the number
-#             of individuals.
-
-#     Returns:
-#         a dictionary containing the QD score (sum of fitnesses
-#             modified to be all positive), the max fitness of the
-#             repertoire, the coverage (number of niche filled in
-#             the repertoire).
-#     """
-
-#     # QD metrics from archive
-#     archive_metrics = {}
-#     repertoire_empty = repertoire.fitnesses == -jnp.inf
-#     archive_metrics["qd_score"] = jnp.sum(repertoire.fitnesses, where=~repertoire_empty)
-#     archive_metrics["qd_score"] += qd_offset * jnp.sum(1.0 - repertoire_empty)
-#     archive_metrics["coverage"] = 100 * jnp.mean(1.0 - repertoire_empty)
-#     archive_metrics["max_fitness"] = jnp.max(repertoire.fitnesses)
-
-#     # ES metrics
-#     metrics = emitter_state.metrics
-#     # Turn into a dict
-#     metrics = metrics.__dict__.copy()
-
-#     # Merge
-#     metrics.update(archive_metrics)
-#     return metrics
-

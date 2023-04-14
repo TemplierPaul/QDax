@@ -160,7 +160,7 @@ class VanillaESEmitterState(EmitterState):
     def save(self, path):
         """Saves the state to a file."""
         flat_genotypes = flatten_genotype(self.offspring)
-        jnp.save(path + "offspring.npy", flat_genotypes)
+        jnp.save(path + "_offspring.npy", flat_genotypes)
         print("Saved offspring to", path + "_offspring.npy")
 
         
