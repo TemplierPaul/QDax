@@ -85,6 +85,8 @@ class ESRLEmitter(Emitter):
         self._config = config
         self.es_emitter = es_emitter
         self.rl_emitter = rl_emitter
+        
+        self._surrogate_eval = None
 
     @property
     def batch_size(self) -> int:
@@ -123,6 +125,7 @@ class ESRLEmitter(Emitter):
         metrics = ESMetrics(
             es_updates=0,
             rl_updates=0,
+            surrogate_updates=0,
             evaluations=0,
             actor_fitness=-jnp.inf,
             center_fitness=-jnp.inf,
@@ -131,6 +134,24 @@ class ESRLEmitter(Emitter):
         state = ESRLEmitterState(es_state, rl_state)
         state = state.set_metrics(metrics)
         state = state.set_key(random_key)
+
+        self._surrogate_eval = jax.vmap(
+            self.rl_emitter.surrogate_eval, 
+            in_axes=(0, None, None),
+        )
+
+        self.true_es_emitter = self.es_emitter._es_emitter
+
+        self.surrogate_es_emitter = partial(
+            self.es_emitter._base_es_emitter, 
+            fitness_function=self.surrogate_evaluate,
+        )
+
+        # jit it
+        self.surrogate_es_emitter = partial(
+            jax.jit,
+            static_argnames=("scores_fn"),
+        )(self.surrogate_es_emitter)
 
         return state, random_key
     
@@ -261,9 +282,9 @@ class ESRLEmitter(Emitter):
             # center_fitness=center_fitness,
         )
 
-        return emitter_state.replace(
-            metrics=metrics,
-        )
+        emitter_state = emitter_state.set_metrics(metrics)
+
+        return emitter_state
 
     @partial(
         jax.jit,
@@ -345,7 +366,7 @@ class ESRLEmitter(Emitter):
                 return fitnesses
 
         # Run es process
-        offspring, optimizer_state, random_key, extra_scores = self.es_emitter._es_emitter(
+        offspring, optimizer_state, random_key, extra_scores = self.true_es_emitter(
             parent=genotypes,
             optimizer_state=emitter_state.es_state.optimizer_state,
             random_key=random_key,
@@ -495,8 +516,8 @@ class ESRLEmitter(Emitter):
             offspring: Genotype,
             extra_scores: ExtraScores,
             fitnesses: Fitness,
-            # evaluations: int,
             random_key: RNGKey,
+            new_evaluations: int = 0,
         ) -> ESMetrics:
 
         # metrics = emitter_state.metrics
@@ -505,62 +526,9 @@ class ESRLEmitter(Emitter):
             offspring,
             extra_scores,
             fitnesses,
-            # evaluations=evaluations,
             random_key=random_key,
+            new_evaluations=new_evaluations,
         )
-
-        # Log fitness from the center
-        # center_fitness = jnp.mean(fitnesses)
-
-        # metrics = metrics.replace(
-        #     center_fitness=center_fitness,
-        #     evaluations=evaluations,
-        # )
-
-        # Population fitness stats
-        # if "population_fitness" in extra_scores:
-        #     pop_mean = jnp.mean(extra_scores["population_fitness"])
-        #     pop_median = jnp.median(extra_scores["population_fitness"])
-        #     pop_std = jnp.std(extra_scores["population_fitness"])
-        #     pop_min = jnp.min(extra_scores["population_fitness"])
-        #     pop_max = jnp.max(extra_scores["population_fitness"]) 
-        #     metrics = metrics.replace(
-        #         pop_mean=pop_mean,
-        #         pop_median=pop_median,
-        #         pop_std=pop_std,
-        #         pop_min=pop_min,
-        #         pop_max=pop_max,
-        #     )
-        
-        # Evaluating offspring multiple time
-        # multi_offspring = jax.tree_util.tree_map(
-        #     lambda x: jnp.repeat(x, self._config.es_config.sample_number, axis=0),
-        #     offspring,
-        # )
-
-        # off_fitnesses, _, _, random_key = self.es_emitter._scoring_fn(
-        #     multi_offspring, random_key
-        # )
-         
-        # metrics = metrics.replace(
-        #     center_mean=jnp.mean(off_fitnesses),
-        #     center_median=jnp.median(off_fitnesses),
-        #     center_std=jnp.std(off_fitnesses),
-        #     center_min=jnp.min(off_fitnesses),
-        #     center_max=jnp.max(off_fitnesses),
-        # )
-
-        # # Log sigma if using cmaes
-        # if isinstance(emitter_state.es_state.optimizer_state, CMAESState):
-        #     metrics = metrics.replace(
-        #         sigma=emitter_state.es_state.optimizer_state.sigma,
-        #     )
-
-        # if "eigen_change" in extra_scores:
-        #     metrics = metrics.replace(
-        #         eigen_change = extra_scores["eigen_change"],
-        #     )
-        
         # RL actor fitness
         actor_genome = emitter_state.rl_state.actor_params
         actor_fitness, _ = self.multi_eval(actor_genome, random_key)
@@ -570,3 +538,130 @@ class ESRLEmitter(Emitter):
         )
         
         return metrics
+
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def surrogate_evaluate(
+            self,
+            samples: Genotype,
+            random_key: jnp.ndarray,
+            emitter_state: ESRLEmitterState,
+        ) -> Tuple[Fitness, Descriptor, ExtraScores, jnp.ndarray]:
+            """Evaluate the samples using the surrogate model.
+
+            Args:
+                samples: the samples to evaluate.
+                random_key
+
+            Returns:
+                The fitnesses, descriptors, extra_scores and a new random_key.
+            """
+            random_key = emitter_state.rl_state.random_key
+            subkey, random_key = jax.random.split(random_key)
+            replay_buffer = emitter_state.rl_state.replay_buffer
+            transitions, random_key = replay_buffer.sample(
+                subkey, 
+                sample_size=self._config.rl_config.surrogate_batch
+            )
+            # print("surrogate eval", jax.tree_map(lambda x: x.shape, samples))
+            
+            fitnesses = self._surrogate_eval(
+                samples, 
+                emitter_state.rl_state.critic_params,
+                transitions,
+            )
+
+            descriptors = None
+            transitions = self.rl_emitter.get_dummy_batch(
+                self._config.es_config.sample_number,
+                self._config.es_config.episode_length
+            )
+            extra_scores = {"transitions": transitions}
+
+            return fitnesses, descriptors, extra_scores, random_key
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def surrogate_state_update(
+        self,
+        emitter_state: ESRLEmitterState,
+        repertoire: ESRepertoire,
+        genotypes: Genotype,
+        fitnesses: Fitness,
+        descriptors: Descriptor,
+        extra_scores: ExtraScores,
+    ) -> ESRLEmitterState:
+        """Generate the gradient offspring for the next emitter call. Also
+        update the novelty archive and generation count from current call.
+
+        Params:
+            emitter_state
+            repertoire: unused
+            genotypes: the genotypes of the offspring
+            fitnesses: the fitnesses of the offspring
+            descriptors: the descriptors of the offspring
+            extra_scores: the extra scores of the offspring
+
+        Returns:
+            the updated emitter state
+        """
+        random_key, emitter_state = emitter_state.get_key()
+
+        assert jax.tree_util.tree_leaves(genotypes)[0].shape[0] == 1, (
+            "ERROR: ES generates 1 offspring per generation, "
+            + "batch_size should be 1, the inputed batch has size:"
+            + str(jax.tree_util.tree_leaves(genotypes)[0].shape[0])
+        )
+
+        # Updating novelty archive
+        novelty_archive = emitter_state.es_state.novelty_archive.update(descriptors)
+
+        # Define scores for es process
+        def scores(fitnesses: Fitness, descriptors: Descriptor) -> jnp.ndarray:
+            if self.es_emitter._config.nses_emitter:
+                return novelty_archive.novelty(
+                    descriptors, self.es_emitter._config.novelty_nearest_neighbors
+                )
+            else:
+                return fitnesses
+            
+        # Run es process
+        offspring, optimizer_state, random_key, extra_scores = self.surrogate_es_emitter(
+            parent=genotypes,
+            optimizer_state=emitter_state.es_state.optimizer_state,
+            random_key=random_key,
+            scores_fn=scores,
+            actor=emitter_state.rl_state.actor_params,
+            surrogate_data= emitter_state
+        )
+
+        # Update ES emitter state
+        es_state = emitter_state.es_state.replace(
+            offspring=offspring,
+            optimizer_state=optimizer_state,
+            random_key=random_key,
+            novelty_archive=novelty_archive,
+            generation_count=emitter_state.es_state.generation_count + 1,
+        )
+
+        # Update random key
+        rl_state = emitter_state.rl_state.replace(
+            random_key=random_key,
+            es_center=genotypes,
+        )
+
+        metrics = emitter_state.metrics.replace(
+            es_updates=emitter_state.metrics.es_updates,
+            surrogate_updates=emitter_state.metrics.surrogate_updates + 1,
+            rl_updates=emitter_state.metrics.rl_updates,
+        )
+        # Share random key between ES and RL emitters
+
+        state = ESRLEmitterState(es_state, rl_state)
+        state = state.set_metrics(metrics)
+        state = state.set_key(random_key)
+        return state, extra_scores

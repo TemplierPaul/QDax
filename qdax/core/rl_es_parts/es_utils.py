@@ -21,6 +21,7 @@ from flax.struct import dataclass as fdataclass
 @fdataclass
 class ESMetrics:
     es_updates: int=0
+    surrogate_updates: int=0
     rl_updates: int=0
     evaluations: int=0
     actor_fitness: Fitness = -jnp.inf

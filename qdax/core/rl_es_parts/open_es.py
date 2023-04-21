@@ -52,7 +52,7 @@ class OpenESEmitter(VanillaESEmitter):
 
     @partial(
         jax.jit,
-        static_argnames=("self", "scores_fn"),
+        static_argnames=("self", "scores_fn", "fitness_function"),
     )
     def _es_emitter(
         self,
@@ -60,6 +60,7 @@ class OpenESEmitter(VanillaESEmitter):
         optimizer_state: optax.OptState,
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
+        fitness_function: Callable[[Genotype], RNGKey],
         actor: Genotype=None,
     ) -> Tuple[Genotype, optax.OptState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
@@ -109,7 +110,7 @@ class OpenESEmitter(VanillaESEmitter):
         )
 
         # Evaluating samples
-        fitnesses, descriptors, extra_scores, random_key = self._scoring_fn(
+        fitnesses, descriptors, extra_scores, random_key = fitness_function(
             samples, random_key
         )
         extra_scores["population_fitness"] = fitnesses

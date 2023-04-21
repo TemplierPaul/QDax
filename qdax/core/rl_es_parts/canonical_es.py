@@ -138,7 +138,7 @@ class CanonicalESEmitter(VanillaESEmitter):
 
     @partial(
         jax.jit,
-        static_argnames=("self", "scores_fn"),
+        static_argnames=("self", "scores_fn", "fitness_function"),
     )
     def _es_emitter(
         self,
@@ -146,6 +146,7 @@ class CanonicalESEmitter(VanillaESEmitter):
         optimizer_state: optax.OptState,
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
+        fitness_function: Callable[[Genotype], RNGKey],
         actor: Genotype=None,
     ) -> Tuple[Genotype, optax.OptState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
@@ -204,7 +205,7 @@ class CanonicalESEmitter(VanillaESEmitter):
         #     )
 
         # Evaluating samples
-        fitnesses, descriptors, extra_scores, random_key = self._scoring_fn(
+        fitnesses, descriptors, extra_scores, random_key = fitness_function(
             samples, random_key
         )
 
@@ -308,6 +309,7 @@ class CanonicalESEmitter(VanillaESEmitter):
             random_key=emitter_state.random_key,
             scores_fn=scores,
             optimizer_state=emitter_state.optimizer_state,
+            fitness_function=self._scoring_fn,
         )
 
         metrics = self.get_metrics(
@@ -326,3 +328,5 @@ class CanonicalESEmitter(VanillaESEmitter):
             random_key=random_key,
             metrics=metrics,
         )
+    
+

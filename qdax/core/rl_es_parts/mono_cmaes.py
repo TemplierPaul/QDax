@@ -104,6 +104,21 @@ class MonoCMAESEmitter(VanillaESEmitter):
                 return samples, networks, norm
             self._actor_injection = no_injection
 
+        # Add a wrapper to the scoring function to handle the surrogate data
+        extended_scoring = lambda networks, random_key, extra: self._scoring_fn(
+            networks, random_key)
+
+        self._es_emitter = partial(
+            self._base_es_emitter, 
+            fitness_function=extended_scoring,
+            surrogate_data=None,
+        )
+        self._es_emitter = partial(
+            jax.jit,
+            static_argnames=("scores_fn"),
+        )(self._es_emitter)
+
+
 
     # @partial(
     #     jax.jit,
@@ -132,13 +147,13 @@ class MonoCMAESEmitter(VanillaESEmitter):
 
         flat_variables, tree_def = tree_flatten(init_genotypes)
         self.layer_shapes = [x.shape[1:] for x in flat_variables]
-        print("layer_shapes", self.layer_shapes)
+        # print("layer_shapes", self.layer_shapes)
 
         vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
         sizes = [x.size for x in flat_variables]
         sizes = jnp.array(sizes)
 
-        print("sizes", sizes)
+        # print("sizes", sizes)
 
         self.tree_def = tree_def
         self.layer_sizes = sizes.tolist()
@@ -211,7 +226,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
         # Population networks
         networks = jax.vmap(self.unflatten)(samples)
 
-        print("Before injection", jax.tree_map(lambda x: x.shape, networks))
+        # print("Before injection", jax.tree_map(lambda x: x.shape, networks))
 
         # Repeat actor
         actor = jax.tree_util.tree_map(
@@ -226,7 +241,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
             actor,
         )
 
-        print("After injection", jax.tree_map(lambda x: x.shape, networks))
+        # print("After injection", jax.tree_map(lambda x: x.shape, networks))
 
         # Get actor genome
         actor_genome = self.flatten(actor)
@@ -242,7 +257,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
 
         # Replace the n last one, with n = self._config.nb_injections
         samples = samples.at[-self._config.nb_injections:].set(actor_genome)
-        print("After injection", samples.shape)
+        # print("After injection", samples.shape)
 
 
         return samples, networks, norm
@@ -309,16 +324,18 @@ class MonoCMAESEmitter(VanillaESEmitter):
         return offspring, random_key
     
 
-    @partial(
-        jax.jit,
-        static_argnames=("self", "scores_fn"),
-    )
-    def _es_emitter(
+    # @partial(
+    #     jax.jit,
+    #     static_argnames=("self", "scores_fn"),
+    # )
+    def _base_es_emitter(
         self,
         parent: Genotype,
         optimizer_state: CMAESState,
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
+        fitness_function: Callable[[Genotype], RNGKey],
+        surrogate_data = None,
         actor: Genotype=None,
     ) -> Tuple[Genotype, CMAESState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
@@ -362,9 +379,12 @@ class MonoCMAESEmitter(VanillaESEmitter):
         # print("networks", networks.shape)
         
         # Evaluating samples
-        fitnesses, descriptors, extra_scores, random_key = self._scoring_fn(
-            networks, random_key
+        fitnesses, descriptors, extra_scores, random_key = fitness_function(
+            networks, random_key, surrogate_data
         )
+
+        # print("fitnesses", fitnesses)
+        # print("descriptors", descriptors is not None)
 
         extra_scores["injection_norm"] = norm_factor
 
@@ -489,8 +509,8 @@ class MonoCMAESEmitter(VanillaESEmitter):
             offspring: Genotype,
             extra_scores: ExtraScores,
             fitnesses: Fitness,
-            # evaluations: int,
             random_key: RNGKey,
+            new_evaluations: int = 0,
         ) -> ESMetrics:
 
         # Super
@@ -500,6 +520,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
             extra_scores=extra_scores,
             fitnesses=fitnesses,
             random_key=random_key,
+            new_evaluations=new_evaluations,
         )
 
         metrics = metrics.replace(

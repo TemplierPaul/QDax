@@ -132,6 +132,7 @@ class VanillaESConfig:
 
     nses_emitter: bool = False
     sample_number: int = 1000
+    episode_length: int = 1000
     sample_sigma: float = 0.02
     sample_mirror: bool = True
     sample_rank_norm: bool = True
@@ -214,6 +215,20 @@ class VanillaESEmitter(Emitter):
             self._actor_injection = self._inject_actor
         else:
             self._actor_injection = lambda x, a, p: x
+
+        # Add a wrapper to the scoring function to handle the surrogate data
+        extended_scoring = lambda networks, random_key, extra: self._scoring_fn(
+            networks, random_key)
+
+        self._es_emitter = partial(
+            self._base_es_emitter, 
+            fitness_function=extended_scoring,
+            surrogate_data=None,
+        )
+        self._es_emitter = partial(
+            jax.jit,
+            static_argnames=("scores_fn"),
+        )(self._es_emitter)
 
     @property
     def batch_size(self) -> int:
@@ -436,16 +451,15 @@ class VanillaESEmitter(Emitter):
 
         return sample_noise
 
-    @partial(
-        jax.jit,
-        static_argnames=("self", "scores_fn"),
-    )
-    def _es_emitter(
+
+    def _base_es_emitter(
         self,
         parent: Genotype,
         optimizer_state: optax.OptState,
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
+        fitness_function: Callable[[Genotype], RNGKey],
+        surrogate_data = None,
         actor: Genotype=None,
     ) -> Tuple[Genotype, optax.OptState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
@@ -520,6 +534,7 @@ class VanillaESEmitter(Emitter):
             random_key=emitter_state.random_key,
             scores_fn=scores,
             actor=genotypes,
+            fitness_function=self._scoring_fn,
         )
 
         metrics = self.get_metrics(
@@ -528,6 +543,7 @@ class VanillaESEmitter(Emitter):
             extra_scores,
             fitnesses,
             random_key=random_key,
+            new_evaluations=self._config.sample_number,
         )
 
 
@@ -550,8 +566,8 @@ class VanillaESEmitter(Emitter):
             offspring: Genotype,
             extra_scores: ExtraScores,
             fitnesses: Fitness,
-            # evaluations: int,
             random_key: RNGKey,
+            new_evaluations: int = 0,
         ) -> ESMetrics:
 
         metrics = emitter_state.metrics
@@ -561,7 +577,7 @@ class VanillaESEmitter(Emitter):
 
         metrics = metrics.replace(
             center_fitness=center_fitness,
-            evaluations=metrics.evaluations + self._config.sample_number,
+            evaluations=metrics.evaluations + new_evaluations,
         )
 
         # Population fitness stats

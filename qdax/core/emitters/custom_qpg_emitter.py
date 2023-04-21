@@ -21,10 +21,11 @@ from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterStat
 from qdax.core.emitters.vanilla_es_emitter import flatten_genotype
 
 @dataclass
-class ElasticQualityPGConfig(QualityPGConfig):
+class CustomQualityPGConfig(QualityPGConfig):
     elastic_pull: float = 0.01
+    surrogate_batch: int = 1024
 
-class ElasticQualityPGEmitterState(QualityPGEmitterState):
+class CustomQualityPGEmitterState(QualityPGEmitterState):
     es_center: Params
 
     def save(self, path):
@@ -38,7 +39,7 @@ class ElasticQualityPGEmitterState(QualityPGEmitterState):
         print("Saved critic to " + path + "_critic.npy")
 
 
-class ElasticQualityPGEmitter(Emitter):
+class CustomQualityPGEmitter(Emitter):
     """
     A policy gradient emitter used to implement the Policy Gradient Assisted MAP-Elites
     (PGA-Map-Elites) algorithm, with L2 regularization on the actor network to keep it close to the ES distribution.
@@ -53,12 +54,14 @@ class ElasticQualityPGEmitter(Emitter):
         self._config = config
         self._env = env
         self._policy_network = policy_network
+        self.policy_fn = policy_network.apply
 
         # Init Critics
         critic_network = QModule(
             n_critics=2, hidden_layer_sizes=self._config.critic_hidden_layer_size
         )
         self._critic_network = critic_network
+        self.critic_fn = critic_network.apply
 
         # Set up the losses and optimizers - return the opt states
         self._policy_loss_fn, self._critic_loss_fn = elastic_td3_loss_fn(
@@ -101,7 +104,7 @@ class ElasticQualityPGEmitter(Emitter):
 
     def init(
         self, init_genotypes: Genotype, random_key: RNGKey
-    ) -> Tuple[ElasticQualityPGEmitterState, RNGKey]:
+    ) -> Tuple[CustomQualityPGEmitterState, RNGKey]:
         """Initializes the emitter state.
 
         Args:
@@ -133,6 +136,14 @@ class ElasticQualityPGEmitter(Emitter):
         actor_optimizer_state = self._actor_optimizer.init(actor_params)
 
         # Initialize replay buffer
+        self.get_dummy_batch = lambda p, n: QDTransition.dummy_batch(
+            observation_dim=observation_size,
+            action_dim=action_size,
+            descriptor_dim=descriptor_size,
+            population=p,
+            length=n,
+        )
+        
         dummy_transition = QDTransition.init_dummy(
             observation_dim=observation_size,
             action_dim=action_size,
@@ -145,7 +156,7 @@ class ElasticQualityPGEmitter(Emitter):
 
         # Initial training state
         random_key, subkey = jax.random.split(random_key)
-        emitter_state = ElasticQualityPGEmitterState(
+        emitter_state = CustomQualityPGEmitterState(
             critic_params=critic_params,
             critic_optimizer_state=critic_optimizer_state,
             actor_params=actor_params,
@@ -167,7 +178,7 @@ class ElasticQualityPGEmitter(Emitter):
     def emit(
         self,
         repertoire: Repertoire,
-        emitter_state: ElasticQualityPGEmitterState,
+        emitter_state: CustomQualityPGEmitterState,
         random_key: RNGKey,
     ) -> Tuple[Genotype, RNGKey]:
         """Do a step of PG emission.
@@ -212,7 +223,7 @@ class ElasticQualityPGEmitter(Emitter):
         static_argnames=("self",),
     )
     def emit_pg(
-        self, emitter_state: ElasticQualityPGEmitterState, parents: Genotype
+        self, emitter_state: CustomQualityPGEmitterState, parents: Genotype
     ) -> Genotype:
         """Emit the offsprings generated through pg mutation.
 
@@ -237,7 +248,7 @@ class ElasticQualityPGEmitter(Emitter):
         jax.jit,
         static_argnames=("self",),
     )
-    def emit_actor(self, emitter_state: ElasticQualityPGEmitterState) -> Genotype:
+    def emit_actor(self, emitter_state: CustomQualityPGEmitterState) -> Genotype:
         """Emit the greedy actor.
 
         Simply needs to be retrieved from the emitter state.
@@ -254,13 +265,13 @@ class ElasticQualityPGEmitter(Emitter):
     @partial(jax.jit, static_argnames=("self",))
     def state_update(
         self,
-        emitter_state: ElasticQualityPGEmitterState,
+        emitter_state: CustomQualityPGEmitterState,
         repertoire: Optional[Repertoire],
         genotypes: Optional[Genotype],
         fitnesses: Optional[Fitness],
         descriptors: Optional[Descriptor],
         extra_scores: ExtraScores,
-    ) -> ElasticQualityPGEmitterState:
+    ) -> CustomQualityPGEmitterState:
         """This function gives an opportunity to update the emitter state
         after the genotypes have been scored.
 
@@ -291,8 +302,8 @@ class ElasticQualityPGEmitter(Emitter):
         emitter_state = emitter_state.replace(replay_buffer=replay_buffer)
 
         def scan_train_critics(
-            carry: ElasticQualityPGEmitterState, unused: Any
-        ) -> Tuple[ElasticQualityPGEmitterState, Any]:
+            carry: CustomQualityPGEmitterState, unused: Any
+        ) -> Tuple[CustomQualityPGEmitterState, Any]:
             emitter_state = carry
             new_emitter_state = self._train_critics(emitter_state)
             return new_emitter_state, ()
@@ -309,8 +320,8 @@ class ElasticQualityPGEmitter(Emitter):
 
     @partial(jax.jit, static_argnames=("self",))
     def _train_critics(
-        self, emitter_state: ElasticQualityPGEmitterState
-    ) -> ElasticQualityPGEmitterState:
+        self, emitter_state: CustomQualityPGEmitterState
+    ) -> CustomQualityPGEmitterState:
         """Apply one gradient step to critics and to the greedy actor
         (contained in carry in training_state), then soft update target critics
         and target actor.
@@ -463,7 +474,7 @@ class ElasticQualityPGEmitter(Emitter):
     def _mutation_function_pg(
         self,
         policy_params: Genotype,
-        emitter_state: ElasticQualityPGEmitterState,
+        emitter_state: CustomQualityPGEmitterState,
     ) -> Genotype:
         """Apply pg mutation to a policy via multiple steps of gradient descent.
         First, update the rewards to be diversity rewards, then apply the gradient
@@ -483,9 +494,9 @@ class ElasticQualityPGEmitter(Emitter):
         policy_optimizer_state = self._policies_optimizer.init(policy_params)
 
         def scan_train_policy(
-            carry: Tuple[ElasticQualityPGEmitterState, Genotype, optax.OptState],
+            carry: Tuple[CustomQualityPGEmitterState, Genotype, optax.OptState],
             unused: Any,
-        ) -> Tuple[Tuple[ElasticQualityPGEmitterState, Genotype, optax.OptState], Any]:
+        ) -> Tuple[Tuple[CustomQualityPGEmitterState, Genotype, optax.OptState], Any]:
             emitter_state, policy_params, policy_optimizer_state = carry
             (
                 new_emitter_state,
@@ -514,10 +525,10 @@ class ElasticQualityPGEmitter(Emitter):
     @partial(jax.jit, static_argnames=("self",))
     def _train_policy(
         self,
-        emitter_state: ElasticQualityPGEmitterState,
+        emitter_state: CustomQualityPGEmitterState,
         policy_params: Params,
         policy_optimizer_state: optax.OptState,
-    ) -> Tuple[ElasticQualityPGEmitterState, Params, optax.OptState]:
+    ) -> Tuple[CustomQualityPGEmitterState, Params, optax.OptState]:
         """Apply one gradient step to a policy (called policy_params).
 
         Args:
@@ -576,3 +587,30 @@ class ElasticQualityPGEmitter(Emitter):
         policy_params = optax.apply_updates(policy_params, policy_updates)
 
         return policy_optimizer_state, policy_params
+
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def surrogate_eval(
+        self, 
+        policy_params: Params,
+        critic_params: Params,
+        transitions: QDTransition,
+    ) -> Fitness:
+        """Evaluate the surrogate fitness of a genotype.
+
+        Args:
+            genotype: the genotype to evaluate.
+
+        Returns:
+            The surrogate fitness of the genotype.
+        """
+        action = self.policy_fn(policy_params, transitions.obs)
+        q_value = self.critic_fn(
+            critic_params, obs=transitions.obs, actions=action  # type: ignore
+        )
+        q1_action = jnp.take(q_value, jnp.asarray([0]), axis=-1)
+        surrogate = jnp.mean(q1_action)
+        return surrogate
+

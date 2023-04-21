@@ -260,6 +260,38 @@ class QDTransition(Transition):
             next_state_desc=jnp.zeros(shape=(1, descriptor_dim)),
         )
         return dummy_transition
+    
+    @classmethod
+    def dummy_batch(  # type: ignore
+        cls, 
+        observation_dim: int, 
+        action_dim: int, 
+        descriptor_dim: int,
+        population: int,
+        length: int,
+    ) -> QDTransition:
+        """
+        Initialize a dummy transition that then can be passed to constructors to get
+        all shapes right.
+
+        Args:
+            observation_dim: observation dimension
+            action_dim: action dimension
+
+        Returns:
+            a dummy transition
+        """
+        dummy_transition = QDTransition(
+            obs=jnp.zeros(shape=(population, length, observation_dim)),
+            next_obs=jnp.zeros(shape=(population, length, observation_dim)),
+            rewards=jnp.zeros(shape=(population, length,)),
+            dones=jnp.zeros(shape=(population, length,)),
+            truncations=jnp.zeros(shape=(population, length,)),
+            actions=jnp.zeros(shape=(population, length, action_dim)),
+            state_desc=jnp.zeros(shape=(population, length, descriptor_dim)),
+            next_state_desc=jnp.zeros(shape=(population, length, descriptor_dim)),
+        )
+        return dummy_transition
 
 
 class ReplayBuffer(flax.struct.PyTreeNode):

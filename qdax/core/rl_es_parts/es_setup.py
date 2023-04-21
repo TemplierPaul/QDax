@@ -27,7 +27,7 @@ from qdax.core.rl_es_parts.mono_cmaes import MonoCMAESEmitter, MonoCMAESConfig
 from qdax.core.rl_es_parts.es_utils import ES, default_es_metrics, ESMetrics
 
 from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
-from qdax.core.emitters.elastic_qpg_emitter import ElasticQualityPGConfig, ElasticQualityPGEmitter
+from qdax.core.emitters.custom_qpg_emitter import CustomQualityPGConfig, CustomQualityPGEmitter
 
 from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitter
 from qdax.core.emitters.test_gradients import TestGradientsEmitter
@@ -229,7 +229,7 @@ def setup_es(args):
         #         env=env,
         #     )
         # else:
-        rl_config = ElasticQualityPGConfig(
+        rl_config = CustomQualityPGConfig(
             env_batch_size = 100,
             num_critic_training_steps = args.critic_training,
             num_pg_training_steps = args.pg_training,
@@ -250,7 +250,7 @@ def setup_es(args):
             elastic_pull = args.elastic_pull,
         )
             
-        rl_emitter = ElasticQualityPGEmitter(
+        rl_emitter = CustomQualityPGEmitter(
             config=rl_config,
             policy_network=policy_network,
             env=env,
@@ -306,4 +306,5 @@ def setup_es(args):
         random_key=random_key,
         wandb_run = wandb_run,
         policy_network = policy_network,
+        scoring_fn=scoring_fn,
     )

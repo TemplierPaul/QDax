@@ -51,6 +51,7 @@ class RandomEmitter(VanillaESEmitter):
             num_descriptors: dimension of the descriptors, used to initialise
                 the empty novelty archive.
         """
+        raise NotImplementedError("Random search emitter not implemented yet.")
         self._config = config
         self._scoring_fn = scoring_fn
         self._total_generations = total_generations

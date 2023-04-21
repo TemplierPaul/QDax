@@ -54,6 +54,10 @@ parser.add_argument('--nb_injections', type=int, default=1, help='Number of acto
 parser.add_argument('--critic_training', type=int, default=1000, help='Number of critic training steps')
 parser.add_argument('--pg_training', type=int, default=1000, help='Number of PG training steps')
 
+# RL + ES
+parser.add_argument('--surrogate', default=False, action="store_true", help='Use surrogate')
+parser.add_argument('--surrogate_batch', type=int, default=1024, help='Number of samples to use for surrogate evaluation')
+parser.add_argument('--surrogate_omega', type=float, default=0.6, help='Probability of using surrogate')
 
 # File output
 parser.add_argument('--output', type=str, default='', help='Output file')
@@ -74,7 +78,7 @@ parser.add_argument('--logall', default=False, action="store_true", help='Lot at
 # parse arguments
 args = parser.parse_args()
 
-if args.carlies or args.testrl:
+if args.carlies or args.testrl or args.surrogate:
     args.rl = True
     # args.actor_injection = False
 
@@ -86,7 +90,8 @@ if args.debug:
         "pop": 10,
         'evals': 100,
         'policy_hidden_layer_sizes': 16,
-        "output": "debug"
+        "output": "debug",
+        'surrogate_batch': 10,
     }
     for k, v in debug_values.items():
         setattr(args, k, v)
@@ -107,14 +112,17 @@ algos = {
 }
 args.algo = algos[args.es]
 
+suffix = ''
 if args.rl:
-    suffix = 'RL'
-    if args.carlies:
-        suffix = 'CARLIES'
-    args.algo += f"-{suffix}"
-
+    suffix = '-RL'
+if args.carlies:
+    suffix = '-CARLIES'
 if args.testrl:
-    args.algo += '-TestRL'
+    suffix = '-TestRL'
+if args.surrogate:
+    suffix = '-Surrogate'
+args.algo += f"{suffix}"
+
 
 if args.actor_injection:
     args.algo += "-AI"
@@ -155,11 +163,12 @@ from qdax.core.rl_es_parts.mono_cmaes import MonoCMAESEmitter, MonoCMAESConfig
 from qdax.core.rl_es_parts.es_utils import ES, default_es_metrics, ESMetrics
 
 from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
-from qdax.core.emitters.elastic_qpg_emitter import ElasticQualityPGConfig, ElasticQualityPGEmitter
+from qdax.core.emitters.custom_qpg_emitter import CustomQualityPGConfig, CustomQualityPGEmitter
 
 from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitter
 from qdax.core.emitters.test_gradients import TestGradientsEmitter
 from qdax.core.emitters.carlies_emitter import CARLIES
+from qdax.core.emitters.surrogate_es_emitter import SurrogateESConfig, SurrogateESEmitter
 
 
 import wandb
@@ -244,6 +253,7 @@ if args.es in ["open", "openai"]:
         novelty_nearest_neighbors=args.novelty_nearest_neighbors,
         actor_injection = args.actor_injection,
         nb_injections = args.nb_injections,
+        episode_length = args.episode_length,
     )
 
     es_emitter = OpenESEmitter(
@@ -262,6 +272,7 @@ elif args.es in ["canonical"]:
         novelty_nearest_neighbors=args.novelty_nearest_neighbors,
         actor_injection = args.actor_injection,
         nb_injections = args.nb_injections,
+        episode_length = args.episode_length,
     )
 
     es_emitter = CanonicalESEmitter(
@@ -278,6 +289,7 @@ elif args.es in ["cmaes"]:
         sample_sigma=args.es_sigma,
         actor_injection = args.actor_injection,
         nb_injections = args.nb_injections,
+        episode_length = args.episode_length,
     )
 
     es_emitter = MonoCMAESEmitter(
@@ -293,6 +305,7 @@ elif args.es in ["random"]:
         sample_number=args.pop,
         actor_injection = args.actor_injection,
         nb_injections = args.nb_injections,
+        episode_length = args.episode_length,
     )
     
     es_emitter = RandomEmitter(
@@ -306,42 +319,8 @@ else:
     raise ValueError(f"Unknown ES type: {args.es}")
 
 if args.rl:
-    # ESRL emitter
-    esrl_emitter_type = ESRLEmitter
-    if args.carlies:
-        esrl_emitter_type = CARLIES
-    elif args.testrl:
-        esrl_emitter_type = TestGradientsEmitter
     
-    # if args.elastic_pull == 0:
-    #     # QPG emitter
-    #     rl_config = QualityPGConfig(
-    #         env_batch_size = 100,
-    #         num_critic_training_steps = 1000,
-    #         num_pg_training_steps = 1000,
-
-    #         # TD3 params
-    #         replay_buffer_size = 1000000,
-    #         critic_hidden_layer_size = (256, 256),
-    #         critic_learning_rate = 3e-4,
-    #         actor_learning_rate = 3e-4,
-    #         policy_learning_rate = 1e-3,
-    #         noise_clip = 0.5,
-    #         policy_noise = 0.2,
-    #         discount = 0.99,
-    #         reward_scaling = 1.0,
-    #         batch_size = 256,
-    #         soft_tau_update = 0.005,
-    #         policy_delay = 2,
-    #     )
-            
-    #     rl_emitter = QualityPGEmitter(
-    #         config=rl_config,
-    #         policy_network=policy_network,
-    #         env=env,
-    #     )
-    # else:
-    rl_config = ElasticQualityPGConfig(
+    rl_config = CustomQualityPGConfig(
         env_batch_size = 100,
         num_critic_training_steps = args.critic_training,
         num_pg_training_steps = args.pg_training,
@@ -359,21 +338,37 @@ if args.rl:
         batch_size = 256,
         soft_tau_update = 0.005,
         policy_delay = 2,
+
         elastic_pull = args.elastic_pull,
+        surrogate_batch = args.surrogate_batch,
     )
         
-    rl_emitter = ElasticQualityPGEmitter(
+    rl_emitter = CustomQualityPGEmitter(
         config=rl_config,
         policy_network=policy_network,
         env=env,
     )
-    
 
-    # RL-ES emitter
-    esrl_config = ESRLConfig(
-        es_config=es_config,
-        rl_config=rl_config,
-    )
+    # ESRL emitter
+    esrl_emitter_type = ESRLEmitter
+    if args.carlies:
+        esrl_emitter_type = CARLIES
+    elif args.testrl:
+        esrl_emitter_type = TestGradientsEmitter
+
+    if args.surrogate:
+        esrl_config = SurrogateESConfig(
+            es_config=es_config,
+            rl_config=rl_config,
+            surrogate_omega=args.surrogate_omega,
+        )
+        esrl_emitter_type = SurrogateESEmitter
+
+    else:
+        esrl_config = ESRLConfig(
+            es_config=es_config,
+            rl_config=rl_config,
+        )
 
     emitter = esrl_emitter_type(
         config=esrl_config,
