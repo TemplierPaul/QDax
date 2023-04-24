@@ -98,7 +98,7 @@ if args.debug:
 
 log_period = args.log_period
 args.num_gens = args.evals // args.pop
-num_loops = int(args.num_gens / log_period)
+# num_loops = int(args.num_gens / log_period)
 
 args.policy_hidden_layer_sizes = (args.policy_hidden_layer_sizes, args.policy_hidden_layer_sizes)
 args.critic_hidden_layer_sizes = (args.critic_hidden_layer_sizes, args.critic_hidden_layer_sizes)
@@ -441,9 +441,11 @@ es_scan_update = es.scan_update
 
 # main iterations
 from tqdm import tqdm
-bar = tqdm(range(num_loops))
+bar = tqdm(range(args.evals))
+evaluations = 0
+gen = 0
 try:
-    for i in bar:
+    while evaluations < args.evals:
         start_time = time.time()
         (repertoire, emitter_state, random_key,), metrics = jax.lax.scan(
             es_scan_update,
@@ -454,10 +456,10 @@ try:
         timelapse = time.time() - start_time
 
         # log metrics
-        gen = 1 + i * log_period
+        gen += 1
         logged_metrics = {
             "time": timelapse, 
-            "loop": 1 + i, 
+            # "loop": 1 + i, 
             "generation": gen,
             "frames": gen * args.episode_length * args.pop,
             }
@@ -481,6 +483,10 @@ try:
             emitter_state.save(output)
 
         # Update bar
+        evaluations = logged_metrics["evaluations"]
+        evaluations = int(evaluations)
+        # Set bar progress
+        bar.update(evaluations - bar.n)
         bar.set_description(f"Gen: {gen}, qd_score: {logged_metrics['qd_score']:.2f}, max_fitness: {logged_metrics['max_fitness']:.2f}, coverage: {logged_metrics['coverage']:.2f}, time: {timelapse:.2f}")
 except KeyboardInterrupt:
     print("Interrupted by user")
