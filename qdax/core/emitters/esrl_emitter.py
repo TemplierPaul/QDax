@@ -119,6 +119,8 @@ class ESRLEmitter(Emitter):
         rl_state, random_key = self.rl_emitter.init(init_genotypes, random_key)
         # Make sure the random key is the same for both emitters
 
+        # print("Init QPG Emitter", rl_state.replay_buffer.current_position)
+
         es_state = es_state.replace(random_key=random_key)
         rl_state = rl_state.replace(random_key=random_key)
 
@@ -152,6 +154,8 @@ class ESRLEmitter(Emitter):
             jax.jit,
             static_argnames=("scores_fn"),
         )(self.surrogate_es_emitter)
+
+        # print("Init ESRL Emitter", state.rl_state.replay_buffer.current_position)
 
         return state, random_key
     

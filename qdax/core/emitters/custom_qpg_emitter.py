@@ -19,6 +19,7 @@ from qdax.types import Descriptor, ExtraScores, Fitness, Genotype, Params, RNGKe
 from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
 
 from qdax.core.emitters.vanilla_es_emitter import flatten_genotype
+from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 
 @dataclass
 class CustomQualityPGConfig(QualityPGConfig):
@@ -84,6 +85,10 @@ class CustomQualityPGEmitter(Emitter):
         self._policies_optimizer = optax.adam(
             learning_rate=self._config.policy_learning_rate
         )
+
+        self.critic_tree_def = None
+        self.critic_layer_sizes = None
+        self.critic_split_indices = None
 
     @property
     def batch_size(self) -> int:
@@ -153,6 +158,7 @@ class CustomQualityPGEmitter(Emitter):
         replay_buffer = ReplayBuffer.init(
             buffer_size=self._config.replay_buffer_size, transition=dummy_transition
         )
+        # print("Replay buffer position", replay_buffer.current_position)
 
         # Initial training state
         random_key, subkey = jax.random.split(random_key)
@@ -169,7 +175,49 @@ class CustomQualityPGEmitter(Emitter):
             es_center=init_genotypes,
         )
 
+        flat_variables, tree_def = tree_flatten(critic_params)
+        self.critic_layer_shapes = [x.shape for x in flat_variables]
+        # print("critic layer shapes", self.critic_layer_shapes)
+
+        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
+        sizes = [x.size for x in flat_variables]
+        sizes = jnp.array(sizes)
+
+        # print("critic sizes", sizes)
+
+        self.critic_tree_def = tree_def
+        self.critic_layer_sizes = sizes.tolist()
+        # print("layer_sizes", self.critic_layer_sizes)
+        self.critic_split_indices = jnp.cumsum(jnp.array(self.critic_layer_sizes))[:-1].tolist()
+        # print("split_indices", self.split_indices)
+
         return emitter_state, random_key
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def flatten_critic(self, network):
+        flat_variables, _ = tree_flatten(network)
+        # print("Flatten", flat_variables)
+        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
+        return vect
+    
+
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def unflatten_critic(self, vect):
+        """Unflatten a vector of floats into a network"""
+        # print("Unflatten", vect.shape)
+        split_genome = jnp.split(vect, self.critic_split_indices)
+        # Reshape to the original shape
+        split_genome = [x.reshape(s) for x, s in zip(split_genome, self.critic_layer_shapes)]
+
+        # Unflatten the tree
+        new_net = tree_unflatten(self.critic_tree_def, split_genome)
+        return new_net
 
     @partial(
         jax.jit,

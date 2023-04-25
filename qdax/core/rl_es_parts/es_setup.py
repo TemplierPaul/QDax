@@ -32,6 +32,8 @@ from qdax.core.emitters.custom_qpg_emitter import CustomQualityPGConfig, CustomQ
 from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitter
 from qdax.core.emitters.test_gradients import TestGradientsEmitter
 from qdax.core.emitters.carlies_emitter import CARLIES
+from qdax.core.emitters.surrogate_es_emitter import SurrogateESConfig, SurrogateESEmitter
+
 import wandb
 from dataclasses import dataclass
 
@@ -132,6 +134,7 @@ def setup_es(args):
             novelty_nearest_neighbors=args.novelty_nearest_neighbors,
             actor_injection = args.actor_injection,
             nb_injections = args.nb_injections,
+            episode_length = args.episode_length,
         )
 
         es_emitter = OpenESEmitter(
@@ -150,6 +153,7 @@ def setup_es(args):
             novelty_nearest_neighbors=args.novelty_nearest_neighbors,
             actor_injection = args.actor_injection,
             nb_injections = args.nb_injections,
+            episode_length = args.episode_length,
         )
 
         es_emitter = CanonicalESEmitter(
@@ -166,6 +170,7 @@ def setup_es(args):
             sample_sigma=args.es_sigma,
             actor_injection = args.actor_injection,
             nb_injections = args.nb_injections,
+            episode_length = args.episode_length,
         )
 
         es_emitter = MonoCMAESEmitter(
@@ -181,6 +186,7 @@ def setup_es(args):
             sample_number=args.pop,
             actor_injection = args.actor_injection,
             nb_injections = args.nb_injections,
+            episode_length = args.episode_length,
         )
         
         es_emitter = RandomEmitter(
@@ -194,41 +200,7 @@ def setup_es(args):
         raise ValueError(f"Unknown ES type: {args.es}")
 
     if args.rl:
-        # ESRL emitter
-        esrl_emitter_type = ESRLEmitter
-        if args.carlies:
-            esrl_emitter_type = CARLIES
-        elif args.testrl:
-            esrl_emitter_type = TestGradientsEmitter
         
-        # if args.elastic_pull == 0:
-        #     # QPG emitter
-        #     rl_config = QualityPGConfig(
-        #         env_batch_size = 100,
-        #         num_critic_training_steps = 1000,
-        #         num_pg_training_steps = 1000,
-
-        #         # TD3 params
-        #         replay_buffer_size = 1000000,
-        #         critic_hidden_layer_size = (256, 256),
-        #         critic_learning_rate = 3e-4,
-        #         actor_learning_rate = 3e-4,
-        #         policy_learning_rate = 1e-3,
-        #         noise_clip = 0.5,
-        #         policy_noise = 0.2,
-        #         discount = 0.99,
-        #         reward_scaling = 1.0,
-        #         batch_size = 256,
-        #         soft_tau_update = 0.005,
-        #         policy_delay = 2,
-        #     )
-                
-        #     rl_emitter = QualityPGEmitter(
-        #         config=rl_config,
-        #         policy_network=policy_network,
-        #         env=env,
-        #     )
-        # else:
         rl_config = CustomQualityPGConfig(
             env_batch_size = 100,
             num_critic_training_steps = args.critic_training,
@@ -247,7 +219,9 @@ def setup_es(args):
             batch_size = 256,
             soft_tau_update = 0.005,
             policy_delay = 2,
+
             elastic_pull = args.elastic_pull,
+            surrogate_batch = args.surrogate_batch,
         )
             
         rl_emitter = CustomQualityPGEmitter(
@@ -255,13 +229,27 @@ def setup_es(args):
             policy_network=policy_network,
             env=env,
         )
-        
 
-        # RL-ES emitter
-        esrl_config = ESRLConfig(
-            es_config=es_config,
-            rl_config=rl_config,
-        )
+        # ESRL emitter
+        esrl_emitter_type = ESRLEmitter
+        if args.carlies:
+            esrl_emitter_type = CARLIES
+        elif args.testrl:
+            esrl_emitter_type = TestGradientsEmitter
+
+        if args.surrogate:
+            esrl_config = SurrogateESConfig(
+                es_config=es_config,
+                rl_config=rl_config,
+                surrogate_omega=args.surrogate_omega,
+            )
+            esrl_emitter_type = SurrogateESEmitter
+
+        else:
+            esrl_config = ESRLConfig(
+                es_config=es_config,
+                rl_config=rl_config,
+            )
 
         emitter = esrl_emitter_type(
             config=esrl_config,
@@ -293,8 +281,9 @@ def setup_es(args):
     repertoire, emitter_state, random_key = es.init(
         init_variables, centroids, random_key
     )
+    # print("After ES init:", emitter_state.rl_state.replay_buffer.current_position)
 
-    print("Initialized ES")
+    # print("Initialized ES")
     print(es_emitter)
 
     return ESMaker(

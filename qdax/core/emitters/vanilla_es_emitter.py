@@ -230,6 +230,10 @@ class VanillaESEmitter(Emitter):
             static_argnames=("scores_fn"),
         )(self._es_emitter)
 
+        self.tree_def = None
+        self.layer_sizes = None
+        self.split_indices = None
+
     @property
     def batch_size(self) -> int:
         """
@@ -277,6 +281,22 @@ class VanillaESEmitter(Emitter):
             center_fitness=-jnp.inf,
         )
 
+        flat_variables, tree_def = tree_flatten(init_genotypes)
+        self.layer_shapes = [x.shape[1:] for x in flat_variables]
+        # print("layer_shapes", self.layer_shapes)
+
+        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
+        sizes = [x.size for x in flat_variables]
+        sizes = jnp.array(sizes)
+
+        # print("sizes", sizes)
+
+        self.tree_def = tree_def
+        self.layer_sizes = sizes.tolist()
+        # print("layer_sizes", self.layer_sizes)
+        self.split_indices = jnp.cumsum(jnp.array(self.layer_sizes))[:-1].tolist()
+        # print("split_indices", self.split_indices)
+
         return (
             VanillaESEmitterState(
                 optimizer_state=initial_optimizer_state,
@@ -289,6 +309,32 @@ class VanillaESEmitter(Emitter):
             ),
             random_key,
         )
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def flatten(self, network):
+        flat_variables, _ = tree_flatten(network)
+        # print("Flatten", flat_variables)
+        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
+        return vect
+    
+
+    @partial(
+        jax.jit,
+        static_argnames=("self",),
+    )
+    def unflatten(self, vect):
+        """Unflatten a vector of floats into a network"""
+        # print("Unflatten", vect.shape)
+        split_genome = jnp.split(vect, self.split_indices)
+        # Reshape to the original shape
+        split_genome = [x.reshape(s) for x, s in zip(split_genome, self.layer_shapes)]
+
+        # Unflatten the tree
+        new_net = tree_unflatten(self.tree_def, split_genome)
+        return new_net
 
     @partial(
         jax.jit,

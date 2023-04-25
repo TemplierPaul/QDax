@@ -161,8 +161,6 @@ class MonoCMAESEmitter(VanillaESEmitter):
         self.split_indices = jnp.cumsum(jnp.array(self.layer_sizes))[:-1].tolist()
         # print("split_indices", self.split_indices)
 
-
-
         genotype_dim = len(vect)
         # print("genotype_dim", genotype_dim)
 
@@ -261,32 +259,6 @@ class MonoCMAESEmitter(VanillaESEmitter):
 
 
         return samples, networks, norm
-
-    @partial(
-        jax.jit,
-        static_argnames=("self",),
-    )
-    def flatten(self, network):
-        flat_variables, _ = tree_flatten(network)
-        # print("Flatten", flat_variables)
-        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
-        return vect
-    
-
-    @partial(
-        jax.jit,
-        static_argnames=("self",),
-    )
-    def unflatten(self, vect):
-        """Unflatten a vector of floats into a network"""
-        # print("Unflatten", vect.shape)
-        split_genome = jnp.split(vect, self.split_indices)
-        # Reshape to the original shape
-        split_genome = [x.reshape(s) for x, s in zip(split_genome, self.layer_shapes)]
-
-        # Unflatten the tree
-        new_net = tree_unflatten(self.tree_def, split_genome)
-        return new_net
 
     
     @partial(

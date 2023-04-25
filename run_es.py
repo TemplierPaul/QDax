@@ -49,6 +49,7 @@ parser.add_argument('--rl', default=False, action="store_true", help='Add RL')
 parser.add_argument('--testrl', default=False, action="store_true", help='Add RL/ES testing')
 parser.add_argument('--carlies', default=False, action="store_true", help='Add CARLIES')
 parser.add_argument('--elastic_pull', type=float, default=0, help='Penalization for pulling the actor too far from the ES center')
+parser.add_argument('--discount', type=float, default=0.99, help='Discount factor')
 parser.add_argument('--actor_injection', action="store_true", default=False, help='Use actor injection')
 parser.add_argument('--nb_injections', type=int, default=1, help='Number of actors to inject if actor_injection is True')
 parser.add_argument('--critic_training', type=int, default=1000, help='Number of critic training steps')
@@ -333,7 +334,7 @@ if args.rl:
         policy_learning_rate = 1e-3,
         noise_clip = 0.5,
         policy_noise = 0.2,
-        discount = 0.99,
+        discount = args.discount,
         reward_scaling = 1.0,
         batch_size = 256,
         soft_tau_update = 0.005,

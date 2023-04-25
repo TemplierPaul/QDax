@@ -265,15 +265,19 @@ class ES(MAPElites):
             init_genotypes=init_genotypes, random_key=random_key
         )
 
+        # print("Before ES init state_update", emitter_state.rl_state.replay_buffer.current_position)
+
         # update emitter state
-        emitter_state = self._emitter.state_update(
-            emitter_state=emitter_state,
-            repertoire=repertoire,
-            genotypes=init_genotypes,
-            fitnesses=fitnesses,
-            descriptors=descriptors,
-            extra_scores=extra_scores,
-        )
+        # emitter_state = self._emitter.state_update(
+        #     emitter_state=emitter_state,
+        #     repertoire=repertoire,
+        #     genotypes=init_genotypes,
+        #     fitnesses=fitnesses,
+        #     descriptors=descriptors,
+        #     extra_scores=extra_scores,
+        # )
+
+        # print("After ES init state_update", emitter_state.rl_state.replay_buffer.current_position)
 
         return repertoire, emitter_state, random_key
     

@@ -68,6 +68,7 @@ class SurrogateESEmitter(TestGradientsEmitter):
             jnp.array([True, False]), 
             p=jnp.array([self._config.surrogate_omega, 1-self._config.surrogate_omega]))
 
+        cond = cond and emitter_state.rl_state.replay_buffer.size > self._config["surrogate_batch"]
         # Do RL if the ES has done more steps than RL
         # cond = emitter_state.metrics.es_updates <= emitter_state.metrics.rl_updates
 
