@@ -87,6 +87,7 @@ class ESRLEmitter(Emitter):
         self.rl_emitter = rl_emitter
         
         self._surrogate_eval = None
+        self.surrogate_batch = config.rl_config.surrogate_batch
 
     @property
     def batch_size(self) -> int:
