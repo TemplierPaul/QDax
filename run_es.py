@@ -508,30 +508,32 @@ if args.plot:
     # create the x-axis array
     env_steps = jnp.arange(args.num_gens) * args.episode_length
 
-    # create the plots and the grid
-    fig, axes = plot_map_elites_results(
-        env_steps=env_steps,
-        metrics=all_metrics,
-        repertoire=repertoire,
-        min_bd=args.min_bd,
-        max_bd=args.max_bd,
-    )
-
-    import matplotlib.pyplot as plt
-    plt.savefig(plot_file)
-
-    # Log the repertoire plot
-    if wandb_run:
-        from qdax.utils.plotting import plot_2d_map_elites_repertoire
-
-        fig, ax = plot_2d_map_elites_repertoire(
-            centroids=repertoire.centroids,
-            repertoire_fitnesses=repertoire.fitnesses,
-            minval=args.min_bd,
-            maxval=args.max_bd,
-            repertoire_descriptors=repertoire.descriptors,
+    # Check the number of dimensions of the descriptors
+    if len(repertoire.descriptors.shape) == 2:
+        # create the plots and the grid
+        fig, axes = plot_map_elites_results(
+            env_steps=env_steps,
+            metrics=all_metrics,
+            repertoire=repertoire,
+            min_bd=args.min_bd,
+            max_bd=args.max_bd,
         )
-        wandb_run.log({"archive": wandb.Image(fig)})
+
+        import matplotlib.pyplot as plt
+        plt.savefig(plot_file)
+
+        # Log the repertoire plot
+        if wandb_run:
+            from qdax.utils.plotting import plot_2d_map_elites_repertoire
+
+            fig, ax = plot_2d_map_elites_repertoire(
+                centroids=repertoire.centroids,
+                repertoire_fitnesses=repertoire.fitnesses,
+                minval=args.min_bd,
+                maxval=args.max_bd,
+                repertoire_descriptors=repertoire.descriptors,
+            )
+            wandb_run.log({"archive": wandb.Image(fig)})
 
     html_content = repertoire.record_video(env, policy_network)
     video_file = plot_file.replace(".png", ".html")
