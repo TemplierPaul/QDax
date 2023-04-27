@@ -506,7 +506,7 @@ for k, v in logged_metrics.items():
 # Visualisation #
 if args.plot:
     # create the x-axis array
-    env_steps = jnp.arange(args.num_gens) * args.episode_length
+    env_steps = jnp.arange(logged_metrics["evaluations"]) * args.episode_length
 
     # Check the number of dimensions of the descriptors
     if len(repertoire.descriptors.shape) == 2:
