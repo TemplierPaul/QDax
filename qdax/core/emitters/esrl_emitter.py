@@ -90,6 +90,11 @@ class ESRLEmitter(Emitter):
         self.surrogate_batch = config.rl_config.surrogate_batch
 
     @property
+    def config_string(self):
+        s = self.es_emitter.config_string + " | " + self.rl_emitter.config_string
+        return s
+
+    @property
     def batch_size(self) -> int:
         """
         Returns:
@@ -272,7 +277,7 @@ class ESRLEmitter(Emitter):
             offspring,
             pop_extra_scores,
             fitnesses,
-            # evaluations=emitter_state.metrics.evaluations + self.es_emitter._config.sample_number,
+            new_evaluations=self._config.es_config.sample_number * cond,
             random_key=key,
         )
 
@@ -371,13 +376,15 @@ class ESRLEmitter(Emitter):
                 return fitnesses
 
         # Run es process
-        offspring, optimizer_state, random_key, extra_scores = self.true_es_emitter(
+        offspring, optimizer_state, new_random_key, extra_scores = self.true_es_emitter(
             parent=genotypes,
             optimizer_state=emitter_state.es_state.optimizer_state,
             random_key=random_key,
             scores_fn=scores,
             actor=emitter_state.rl_state.actor_params,
         )
+
+        random_key = new_random_key
 
         # Update ES emitter state
         es_state = emitter_state.es_state.replace(

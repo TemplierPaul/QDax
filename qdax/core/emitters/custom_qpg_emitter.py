@@ -91,6 +91,13 @@ class CustomQualityPGEmitter(Emitter):
         self.critic_split_indices = None
 
     @property
+    def config_string(self):
+        s = f"TD3 {self._config.num_critic_training_steps} - PG {self._config.num_pg_training_steps} "
+        if self._config.elastic_pull > 0:
+            s += f"- \u03B5 {self._config.elastic_pull}" # \u03B5 is epsilon
+        return s
+
+    @property
     def batch_size(self) -> int:
         """
         Returns:

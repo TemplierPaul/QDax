@@ -48,10 +48,14 @@ class ESMetrics:
     # Step size metrics
     rl_step_norm: float = -jnp.inf
     es_step_norm: float = -jnp.inf
+    surrogate_step_norm: float = -jnp.inf
     # RL - ES metrics
     es_rl_cosine: float = -jnp.inf
     es_rl_sign: float = -jnp.inf
     actor_es_dist: float = -jnp.inf
+    # surrogate - true fitness metrics
+    surr_fit_cosine: float = -jnp.inf
+    surr_fit_sign: float = -jnp.inf
     # Tracking how far we are from the initial center
     es_dist: float = -jnp.inf
     rl_dist: float = -jnp.inf

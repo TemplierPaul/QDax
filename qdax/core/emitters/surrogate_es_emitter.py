@@ -15,7 +15,7 @@ from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterStat
 from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitterState, ESRLEmitter
 from qdax.core.emitters.emitter import Emitter, EmitterState
-from qdax.core.emitters.test_gradients import TestGradientsEmitter
+from qdax.core.emitters.test_gradients import TestGradientsEmitter, flatten_genotype
 
 @dataclass
 class SurrogateESConfig:
@@ -27,6 +27,12 @@ class SurrogateESConfig:
 
 
 class SurrogateESEmitter(TestGradientsEmitter):
+    @property
+    def config_string(self):
+        s = self.es_emitter.config_string + " | " + self.rl_emitter.config_string
+        s += f" | \u03C9 {self._config.surrogate_omega} ({self._config.rl_config.surrogate_batch})" # \u03C9 is omega
+        return s
+
     @partial(
         jax.jit,
         static_argnames=("self",),
@@ -74,6 +80,7 @@ class SurrogateESEmitter(TestGradientsEmitter):
         # cond = emitter_state.metrics.es_updates <= emitter_state.metrics.rl_updates
 
         # cond = self.choose_es_update(emitter_state, fitnesses, descriptors, extra_scores)
+        old_center = emitter_state.es_state.offspring
 
         emitter_state, pop_extra_scores = jax.lax.cond(
             cond,
@@ -105,8 +112,26 @@ class SurrogateESEmitter(TestGradientsEmitter):
         key, emitter_state = emitter_state.get_key()
         subkey, key = jax.random.split(key)
 
-        actor_genome = emitter_state.rl_state.actor_params
-        actor_fitness, _ = self.multi_eval(actor_genome, subkey)
+        actor = emitter_state.rl_state.actor_params
+        actor_genome = flatten_genotype(actor)
+        new_center_genome = flatten_genotype(offspring)
+        actor_dist = jnp.linalg.norm(actor_genome - new_center_genome)
+
+        angles = self.compute_angles(
+            g1=offspring,
+            g2=actor,
+            center=old_center,
+        )
+
+        metrics = metrics.replace(
+            actor_es_dist = actor_dist,
+            es_step_norm = angles["v1_norm"],
+            rl_step_norm = angles["v2_norm"],
+            es_rl_cosine = angles["cosine_similarity"],
+            es_rl_sign = angles["same_sign"],
+        )
+
+        actor_fitness, _ = self.multi_eval(actor, subkey)
 
         metrics = metrics.replace(
             actor_fitness=actor_fitness,

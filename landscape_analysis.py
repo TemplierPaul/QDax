@@ -88,21 +88,21 @@ if __name__ == "__main__":
     save_path = args.save_path
     print(args)
     print(args.gens)
-
-    # get number of generations
-    import glob
-    import re
-    gen_files = glob.glob(save_path + "/gen_*.npy")
-    # print(gen_files)
-    gen_nums = [int(re.findall(r'\d+', f.split("/")[-1])[0]) for f in gen_files]
-    # get unique
-    gen_nums = list(set(gen_nums))
-    gen_nums.sort()
-    print(f"Found {len(gen_nums)} generations, max gen: {max(gen_nums)}")
-
+    
     # get all numbers in gen_nums that are 1 or a multiple of 100
     gens = args.gens
     if gens is None:
+        # get number of generations
+        import glob
+        import re
+        gen_files = glob.glob(save_path + "/gen_*.npy")
+        # print(gen_files)
+        gen_nums = [int(re.findall(r'\d+', f.split("/")[-1])[0]) for f in gen_files]
+        # get unique
+        gen_nums = list(set(gen_nums))
+        gen_nums.sort()
+        print(f"Found {len(gen_nums)} generations, max gen: {max(gen_nums)}")
+
         gens = [g for g in gen_nums if g == 1 or g % 100 == 0]
 
     print(f"Plotting {len(gens)} generations: {gens}")
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     n_evals = 10
     n = 201
     dx = 0.2
-    emitter._config.rl_config.surrogate_batch = 32768
+    emitter._config.rl_config.surrogate_batch = 15000
 
     # emitter_state = emitter_state
     base_replay_buffer = emitter_state.rl_state.replay_buffer
@@ -240,10 +240,11 @@ if __name__ == "__main__":
     plt.savefig(save_path + "/surrogate_interpolation.png")
 
     # Normalized comparison
-    fig, ax = plt.subplots(figsize=(20, 10))
-
+    # fig, ax = plt.subplots(figsize=(20, 10))
+    # MAke one subplot per generation
     base_x = jnp.linspace(0 - dx, 1 + dx, n)[:, None]
 
+    fig, axs = plt.subplots(len(to_plot), 1, figsize=(10, 3*len(to_plot)))
     for i, gen in enumerate(to_plot):
         # surrogate
         surr_fit = surrogate_fit[gen]
@@ -256,19 +257,49 @@ if __name__ == "__main__":
         dist = distance(save_path, gen)
         # Scale x to be between 0 and dist
         # x = base_x * dist
-        color = colors[i]
-        plt.plot(base_x, fit, label = f"Gen {gen} | True | d={dist:.2f}", color=color)
-        # dotted line with same color
-        plt.plot(base_x, surr_fit, label = f"Gen {gen} | Surr. | d={dist:.2f}", linestyle="--", color=color)
+        # color = colors[i]
+        axs[i].plot(base_x, fit, label = f"True fitness", )
+        axs[i].plot(base_x, surr_fit, label = f"Surrogate fitness")
+        axs[i].legend()
+
+        # vertical bar at 0
+        axs[i].axvline(0, color="black", linestyle="--")
+        # vertical bar at 1
+        axs[i].axvline(1, color="black", linestyle="--")
+
+        # xlabel only on bottom
+        if i == len(to_plot) - 1:
+            axs[i].set_xlabel(" <- ES center | Actor ->")
+        # ylabel only on left
+        axs[i].set_ylabel(f"Gen {gen} | d={dist:.2f}")
+        # title: gen
+        # axs[i].set_title(f"Gen {gen} | d={dist:.2f}")
+
+    # for i, gen in enumerate(to_plot):
+    #     # surrogate
+    #     surr_fit = surrogate_fit[gen]
+    #     surr_fit = (surr_fit - surr_fit.mean()) / surr_fit.std()
+        
+    #     # true fit
+    #     fit = fitnesses[gen]
+    #     fit = (fit - fit.mean()) / fit.std()
+
+    #     dist = distance(save_path, gen)
+    #     # Scale x to be between 0 and dist
+    #     # x = base_x * dist
+    #     color = colors[i]
+    #     plt.plot(base_x, fit, label = f"Gen {gen} | True | d={dist:.2f}", color=color)
+    #     # dotted line with same color
+    #     plt.plot(base_x, surr_fit, label = f"Gen {gen} | Surr. | d={dist:.2f}", linestyle="--", color=color)
 
     # Vertical bar at 0 labeled ES center
-    plt.axvline(0, color="black", linestyle="--")
+    # plt.axvline(0, color="black", linestyle="--")
 
-    # Vertical bar at 1 labeled Actor
-    plt.axvline(1, color="black", linestyle="--")
+    # # Vertical bar at 1 labeled Actor
+    # plt.axvline(1, color="black", linestyle="--")
 
-    plt.xlabel(" <- ES center | Actor ->")
-    plt.ylabel("Surrogate fitness")
-    plt.title(f"{args.algo}\n{args.config}\nNormalized landscapes comparison")
+    # plt.xlabel(" <- ES center | Actor ->")
+    # plt.ylabel("Surrogate fitness")
+    fig.suptitle(f"{args.algo}\n{args.config}\nNormalized landscapes comparison")
     plt.legend()
     plt.savefig(save_path + "/normalized_comparison.png")

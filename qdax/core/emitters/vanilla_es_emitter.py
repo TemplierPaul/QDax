@@ -235,6 +235,11 @@ class VanillaESEmitter(Emitter):
         self.split_indices = None
 
     @property
+    def config_string(self):
+        """Returns a string describing the config."""
+        return f"Base ES"
+
+    @property
     def batch_size(self) -> int:
         """
         Returns:

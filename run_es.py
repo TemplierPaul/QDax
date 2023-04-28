@@ -91,6 +91,7 @@ if args.debug:
         "pop": 10,
         'evals': 100,
         'policy_hidden_layer_sizes': 16,
+        'critic_hidden_layer_sizes': 16,
         "output": "debug",
         'surrogate_batch': 10,
     }
@@ -128,9 +129,11 @@ args.algo += f"{suffix}"
 if args.actor_injection:
     args.algo += "-AI"
 
-args.config = f"ES {args.pop} - \u03C3 {args.es_sigma} - \u03B1 {args.learning_rate}"
-if args.elastic_pull > 0:
-    args.config += f" - \u03B5 {args.elastic_pull}" # \u03B5 is epsilon
+# args.config = f"ES {args.pop} - \u03C3 {args.es_sigma} - \u03B1 {args.learning_rate}"
+# if args.elastic_pull > 0:
+#     args.config += f" - \u03B5 {args.elastic_pull}" # \u03B5 is epsilon
+# if args.surrogate:
+#     args.config += f" - \u03C9 {args.surrogate_omega} ({args.surrogate_batch})" # \u03C9 is omega
 
 print("Parsed arguments:", args)
 
@@ -172,22 +175,6 @@ from qdax.core.emitters.carlies_emitter import CARLIES
 from qdax.core.emitters.surrogate_es_emitter import SurrogateESConfig, SurrogateESEmitter
 
 
-import wandb
-print("Imported modules")
-
-entity = None
-project = args.wandb
-wandb_run = None
-if project != "":
-    if "/" in project:
-        entity, project = project.split("/")
-    wandb_run = wandb.init(
-        project=project,
-        entity=entity,
-        config = {**vars(args)})
-
-    print("Initialized wandb")
-
 ###############
 # Environment #
 
@@ -217,6 +204,7 @@ init_variables = jax.vmap(policy_network.init)(keys, fake_batch)
 # WARNING: use "env.reset" for stochastic environment,
 # use "lambda random_key: init_state" for deterministic environment
 play_reset_fn = env.reset
+# play_reset_fn = lambda random_key: init_state
 
 # Prepare the scoring function
 bd_extraction_fn = environments.behavior_descriptor_extractor[args.env_name]
@@ -404,6 +392,25 @@ repertoire, emitter_state, random_key = es.init(
 
 print("Initialized ES")
 print(es_emitter)
+print(emitter.config_string)
+
+args.config = es_emitter.config_string
+
+import wandb
+print("Imported modules")
+
+entity = None
+project = args.wandb
+wandb_run = None
+if project != "":
+    if "/" in project:
+        entity, project = project.split("/")
+    wandb_run = wandb.init(
+        project=project,
+        entity=entity,
+        config = {**vars(args)})
+
+    print("Initialized wandb")
 
 #######
 # Run #

@@ -65,15 +65,26 @@ class TestGradientsEmitter(ESRLEmitter):
         key, emitter_state = emitter_state.get_key()
         
         # Store es center
-        old_offspring = emitter_state.es_state.offspring
+        # old_offspring = emitter_state.es_state.offspring
         # To vector
         old_center = emitter_state.es_state.offspring
+        old_emitter_state = emitter_state
 
         # Do ES update
         emitter_state, pop_extra_scores = self.es_state_update(
-            emitter_state,
+            old_emitter_state,
             repertoire,
-            genotypes,
+            old_center,
+            fitnesses,
+            descriptors,
+            extra_scores
+        )
+
+        # Do surrogate ES update
+        surrogate_emitter_state, _ = self.surrogate_state_update(
+            old_emitter_state,
+            repertoire,
+            old_center,
             fitnesses,
             descriptors,
             extra_scores
@@ -82,6 +93,7 @@ class TestGradientsEmitter(ESRLEmitter):
         # Compute ES step
         # es_step = emitter_state.es_state.offspring - old_center
         new_center = emitter_state.es_state.offspring
+        surrogate_center = surrogate_emitter_state.es_state.offspring
 
         key, emitter_state = emitter_state.get_key()
         
@@ -93,7 +105,7 @@ class TestGradientsEmitter(ESRLEmitter):
         # Compute RL update on old center
         rl_center = self.rl_emitter.emit_pg(
             emitter_state = rl_state,
-            parents=old_offspring,
+            parents=old_center,
         )
 
         # Log
@@ -105,8 +117,21 @@ class TestGradientsEmitter(ESRLEmitter):
             offspring,
             pop_extra_scores,
             fitnesses,
-            # evaluations=emitter_state.metrics.evaluations,
+            new_evaluations=self._config.es_config.sample_number,
             random_key=key,
+        )
+
+        # True fit - Surrogate fit updates
+        surrogate_angles = self.compute_angles(
+            g1=new_center,
+            g2=surrogate_center,
+            center=old_center,
+        )
+
+        metrics = metrics.replace(
+            surr_fit_cosine= surrogate_angles["cosine_similarity"],
+            surr_fit_sign = surrogate_angles["same_sign"],
+            surrogate_step_norm = surrogate_angles["v2_norm"],
         )
         
         # ES - RL
@@ -127,6 +152,13 @@ class TestGradientsEmitter(ESRLEmitter):
             rl_step_norm = angles["v2_norm"],
             es_rl_cosine = angles["cosine_similarity"],
             es_rl_sign = angles["same_sign"],
+        )
+
+        # RL - Surrogate ES updates
+        surrogate_angles = self.compute_angles(
+            g1=surrogate_center,
+            g2=rl_center,
+            center=old_center,
         )
 
         # Stats since start
@@ -195,3 +227,127 @@ class TestGradientsEmitter(ESRLEmitter):
             "cosine_similarity": cos_sim,
             "same_sign": same_sign,
         }
+    
+    # @partial(
+    #     jax.jit,
+    #     static_argnames=("self",),
+    # )
+    # def es_state_update(
+    #     self,
+    #     emitter_state: ESRLEmitterState,
+    #     repertoire: ESRepertoire,
+    #     genotypes: Genotype,
+    #     fitnesses: Fitness,
+    #     descriptors: Descriptor,
+    #     extra_scores: ExtraScores,
+    # ) -> ESRLEmitterState:
+    #     """Generate the gradient offspring for the next emitter call. Also
+    #     update the novelty archive and generation count from current call.
+
+    #     Params:
+    #         emitter_state
+    #         repertoire: unused
+    #         genotypes: the genotypes of the offspring
+    #         fitnesses: the fitnesses of the offspring
+    #         descriptors: the descriptors of the offspring
+    #         extra_scores: the extra scores of the offspring
+
+    #     Returns:
+    #         the updated emitter state
+    #     """
+    #     random_key, emitter_state = emitter_state.get_key()
+
+    #     assert jax.tree_util.tree_leaves(genotypes)[0].shape[0] == 1, (
+    #         "ERROR: ES generates 1 offspring per generation, "
+    #         + "batch_size should be 1, the inputed batch has size:"
+    #         + str(jax.tree_util.tree_leaves(genotypes)[0].shape[0])
+    #     )
+
+    #     # Updating novelty archive
+    #     novelty_archive = emitter_state.es_state.novelty_archive.update(descriptors)
+
+    #     # Define scores for es process
+    #     def scores(fitnesses: Fitness, descriptors: Descriptor) -> jnp.ndarray:
+    #         if self.es_emitter._config.nses_emitter:
+    #             return novelty_archive.novelty(
+    #                 descriptors, self.es_emitter._config.novelty_nearest_neighbors
+    #             )
+    #         else:
+    #             return fitnesses
+
+    #     # Run es process
+    #     offspring, optimizer_state, new_random_key, extra_scores = self.true_es_emitter(
+    #         parent=genotypes,
+    #         optimizer_state=emitter_state.es_state.optimizer_state,
+    #         random_key=random_key,
+    #         scores_fn=scores,
+    #         actor=emitter_state.rl_state.actor_params,
+    #     )
+
+    #     # Surrogate update simulation
+
+    #     surrogate_offspring, _, _, _ = self.surrogate_es_emitter(
+    #         parent=genotypes,
+    #         optimizer_state=emitter_state.es_state.optimizer_state,
+    #         random_key=random_key,
+    #         scores_fn=scores,
+    #         actor=emitter_state.rl_state.actor_params,
+    #         surrogate_data= emitter_state
+    #     )
+
+    #     # Angle
+    #     surrogate_angles = self.compute_angles(
+    #         g1=offspring,
+    #         g2=surrogate_offspring,
+    #         center=genotypes,
+    #     )
+
+    #     random_key = new_random_key
+
+    #     # Update ES emitter state
+    #     es_state = emitter_state.es_state.replace(
+    #         offspring=offspring,
+    #         optimizer_state=optimizer_state,
+    #         random_key=random_key,
+    #         novelty_archive=novelty_archive,
+    #         generation_count=emitter_state.es_state.generation_count + 1,
+    #     )
+
+    #     # Update QPG emitter to train RL agent
+    #     # Update random key
+    #     rl_state = emitter_state.rl_state.replace(
+    #         random_key=random_key,
+    #         es_center=genotypes,
+    #     )
+
+    #     rl_state = self.rl_emitter.state_update(
+    #         emitter_state = rl_state,
+    #         repertoire = repertoire,
+    #         genotypes = genotypes,
+    #         fitnesses = fitnesses,
+    #         descriptors = descriptors,
+    #         extra_scores = extra_scores,
+    #     )
+
+    #     # metrics = self.es_emitter.get_metrics(
+    #     #     es_state,
+    #     #     offspring,
+    #     #     extra_scores,
+    #     #     fitnesses,
+    #     #     # evaluations=emitter_state.metrics.evaluations,
+    #     #     random_key=random_key,
+    #     # )
+
+    #     metrics = emitter_state.metrics.replace(
+    #         es_updates=emitter_state.metrics.es_updates + 1,
+    #         rl_updates=emitter_state.metrics.rl_updates,
+    #         surr_fit_cosine= surrogate_angles["cosine_similarity"],
+    #         surr_fit_sign = surrogate_angles["same_sign"],
+    #         surrogate_step_norm = surrogate_angles["v2_norm"],
+    #     )
+    #     # Share random key between ES and RL emitters
+
+    #     state = ESRLEmitterState(es_state, rl_state)
+    #     state = state.set_metrics(metrics)
+    #     state = state.set_key(random_key)
+    #     return state, extra_scores

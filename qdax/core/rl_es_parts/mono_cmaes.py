@@ -118,7 +118,14 @@ class MonoCMAESEmitter(VanillaESEmitter):
             static_argnames=("scores_fn"),
         )(self._es_emitter)
 
-
+    @property
+    def config_string(self):
+        """Returns a string describing the config."""
+        s = f"CMAES {self._config.sample_number} "
+        s += f"- \u03C3 {self._config.sample_sigma} "
+        if self._config.actor_injection:
+            s += f"| AI {self._config.nb_injections}"
+        return s
 
     # @partial(
     #     jax.jit,
