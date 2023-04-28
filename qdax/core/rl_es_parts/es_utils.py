@@ -56,6 +56,9 @@ class ESMetrics:
     # surrogate - true fitness metrics
     surr_fit_cosine: float = -jnp.inf
     surr_fit_sign: float = -jnp.inf
+    # Surrogate - RL metrics
+    surr_rl_cosine: float = -jnp.inf
+    surr_rl_sign: float = -jnp.inf
     # Tracking how far we are from the initial center
     es_dist: float = -jnp.inf
     rl_dist: float = -jnp.inf
