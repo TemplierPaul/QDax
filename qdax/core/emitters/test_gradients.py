@@ -161,6 +161,12 @@ class TestGradientsEmitter(ESRLEmitter):
             center=old_center,
         )
 
+        metrics = metrics.replace(
+            surr_rl_cosine= surrogate_angles["cosine_similarity"],
+            surr_rl_sign = surrogate_angles["same_sign"],
+            surrogate_rl_step_norm = surrogate_angles["v2_norm"],
+        )
+
         # Stats since start
         initial_center = emitter_state.es_state.initial_center
         angles = self.compute_angles(

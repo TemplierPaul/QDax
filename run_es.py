@@ -394,7 +394,7 @@ print("Initialized ES")
 print(es_emitter)
 print(emitter.config_string)
 
-args.config = es_emitter.config_string
+args.config = emitter.config_string
 
 import wandb
 print("Imported modules")
