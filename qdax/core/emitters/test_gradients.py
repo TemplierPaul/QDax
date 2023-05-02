@@ -24,6 +24,43 @@ from qdax.core.cmaes import CMAESState
 from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitterState, ESRLEmitter
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 
+import jax
+import jax.numpy as jnp
+
+@jax.jit
+def spearman(x, y):
+    """Computes the Spearman correlation coefficient and p-value between two arrays.
+
+    Args:
+    x: A NumPy array of values.
+    y: A NumPy array of values.
+
+    Returns:
+    A tuple of the Spearman correlation coefficient and p-value between x and y.
+    """
+
+    # Compute the ranks of x and y.
+    x_ranks = jnp.argsort(x)
+    y_ranks = jnp.argsort(y)
+
+    # Compute the covariance of the ranks.
+    covariance = jnp.cov(x_ranks, y_ranks)[0, 1]
+
+    # Compute the standard deviation of the ranks.
+    standard_deviation = jnp.std(x_ranks) * jnp.std(y_ranks)
+
+    # Compute the Spearman correlation coefficient.
+    r = covariance / standard_deviation
+
+    # Compute the degrees of freedom.
+    df = x.shape[0] - 2
+
+    # Compute the critical value.
+    critical_value = jnp.sqrt((1 - r**2) / (df * (1 - r**2)))
+
+    # Return the Spearman correlation coefficient and p-value.
+    return r, jnp.less(r, critical_value).astype(jnp.float32)
+
 
 def flatten_genotype(genotype: Genotype) -> jnp.ndarray:
         flat_variables, _ = tree_flatten(genotype)
@@ -81,7 +118,7 @@ class TestGradientsEmitter(ESRLEmitter):
         )
 
         # Do surrogate ES update
-        surrogate_emitter_state, _ = self.surrogate_state_update(
+        surrogate_emitter_state, surrogate_extra_scores = self.surrogate_state_update(
             old_emitter_state,
             repertoire,
             old_center,
@@ -89,6 +126,17 @@ class TestGradientsEmitter(ESRLEmitter):
             descriptors,
             extra_scores
         )
+
+        # check "population_fitness" in pop_extra_scores and surrogate_extra_scores
+        # assert "population_fitness" in pop_extra_scores
+        # assert "population_fitness" in surrogate_extra_scores
+
+        true_fit = pop_extra_scores["population_fitness"]
+        surr_fit = surrogate_extra_scores["population_fitness"]
+
+        corr, pval = spearman(true_fit, surr_fit)
+        # corr is the correlation coefficient
+        # pval is the two-sided p-value for a hypothesis test whose null hypothesis is that two sets of data are uncorrelated
 
         # Compute ES step
         # es_step = emitter_state.es_state.offspring - old_center
@@ -119,6 +167,11 @@ class TestGradientsEmitter(ESRLEmitter):
             fitnesses,
             new_evaluations=self._config.es_config.sample_number,
             random_key=key,
+        )
+
+        metrics = metrics.replace(
+            spearmans_correlation = corr,
+            spearmans_pvalue = pval,
         )
 
         # True fit - Surrogate fit updates

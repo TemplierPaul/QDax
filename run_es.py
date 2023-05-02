@@ -209,7 +209,6 @@ init_variables = jax.vmap(policy_network.init)(keys, fake_batch)
 # WARNING: use "env.reset" for stochastic environment,
 # use "lambda random_key: init_state" for deterministic environment
 play_reset_fn = env.reset
-# play_reset_fn = lambda random_key: init_state
 
 # Prepare the scoring function
 bd_extraction_fn = environments.behavior_descriptor_extractor[args.env_name]

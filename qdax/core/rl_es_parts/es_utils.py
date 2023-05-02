@@ -63,6 +63,10 @@ class ESMetrics:
     es_dist: float = -jnp.inf
     rl_dist: float = -jnp.inf
     start_cos_sim: float = -jnp.inf
+
+    # Spearman correlation between surrogate and true fitness
+    spearmans_correlation: float = -jnp.inf
+    spearmans_pvalue: float = -jnp.inf
     
     ## Canonical in CMAES
     canonical_step_norm: float = -jnp.inf
