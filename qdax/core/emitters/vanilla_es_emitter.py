@@ -585,7 +585,7 @@ class VanillaESEmitter(Emitter):
             random_key=emitter_state.random_key,
             scores_fn=scores,
             actor=genotypes,
-            fitness_function=self._scoring_fn,
+            # fitness_function=self._scoring_fn,
         )
 
         metrics = self.get_metrics(

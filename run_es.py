@@ -22,6 +22,7 @@ parser.add_argument('--evals', type=int, default=1000000, help='Evaluations')
 parser.add_argument('--seed', type=int, default=42, help='Random seed')
 parser.add_argument('--policy_hidden_layer_sizes', type=int, default=128, help='Policy network hidden layer sizes')
 parser.add_argument('--critic_hidden_layer_sizes', type=int, default=128, help='critic network hidden layer sizes')
+parser.add_argument('--deterministic', default=False, action="store_true", help='Fixed init state')
 
 # Map-Elites
 parser.add_argument('--num_init_cvt_samples', type=int, default=50000, help='Number of samples to use for CVT initialization')
@@ -179,7 +180,11 @@ from qdax.core.emitters.surrogate_es_emitter import SurrogateESConfig, Surrogate
 # Environment #
 
 # Init environment
-env = environments.create(args.env_name, episode_length=args.episode_length)
+env = environments.create(
+    args.env_name, 
+    episode_length=args.episode_length,
+    fixed_init_state= args.deterministic,
+)
 
 # Init a random key
 random_key = jax.random.PRNGKey(args.seed)
