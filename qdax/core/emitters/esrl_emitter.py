@@ -22,6 +22,44 @@ from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.cmaes import CMAESState
 from jax.flatten_util import ravel_pytree
 
+import jax
+import jax.numpy as jnp
+
+@jax.jit
+def spearman(x, y):
+    """Computes the Spearman correlation coefficient and p-value between two arrays.
+
+    Args:
+    x: A NumPy array of values.
+    y: A NumPy array of values.
+
+    Returns:
+    A tuple of the Spearman correlation coefficient and p-value between x and y.
+    """
+
+    # Compute the ranks of x and y.
+    x_ranks = jnp.argsort(x)
+    y_ranks = jnp.argsort(y)
+
+    # Compute the covariance of the ranks.
+    covariance = jnp.cov(x_ranks, y_ranks)[0, 1]
+
+    # Compute the standard deviation of the ranks.
+    standard_deviation = jnp.std(x_ranks) * jnp.std(y_ranks)
+
+    # Compute the Spearman correlation coefficient.
+    r = covariance / standard_deviation
+
+    # Compute the degrees of freedom.
+    df = x.shape[0] - 2
+
+    # Compute the critical value.
+    critical_value = jnp.sqrt((1 - r**2) / (df * (1 - r**2)))
+
+    # Return the Spearman correlation coefficient and p-value.
+    return r, jnp.less(r, critical_value).astype(jnp.float32)
+
+
 @dataclass
 class ESRLConfig:
     """Configuration for ESRL Emitter"""
@@ -375,16 +413,32 @@ class ESRLEmitter(Emitter):
             else:
                 return fitnesses
 
+        base_optim_state = emitter_state.es_state.optimizer_state
         # Run es process
         offspring, optimizer_state, new_random_key, extra_scores = self.true_es_emitter(
             parent=genotypes,
-            optimizer_state=emitter_state.es_state.optimizer_state,
+            optimizer_state=base_optim_state,
             random_key=random_key,
             scores_fn=scores,
             actor=emitter_state.rl_state.actor_params,
         )
 
+        # Compute surrogate update
+        surrogate_offspring, _, _, surrogate_extra_scores = self.surrogate_es_emitter(
+            parent=genotypes,
+            optimizer_state=base_optim_state,
+            random_key=random_key,
+            scores_fn=scores,
+            actor=emitter_state.rl_state.actor_params,
+            surrogate_data= emitter_state
+        )
+
         random_key = new_random_key
+
+        true_fit = extra_scores["population_fitness"]
+        surr_fit = surrogate_extra_scores["population_fitness"]
+
+        corr, pval = spearman(true_fit, surr_fit)
 
         # Update ES emitter state
         es_state = emitter_state.es_state.replace(
@@ -423,6 +477,11 @@ class ESRLEmitter(Emitter):
         metrics = emitter_state.metrics.replace(
             es_updates=emitter_state.metrics.es_updates + 1,
             rl_updates=emitter_state.metrics.rl_updates,
+        )
+
+        metrics = metrics.replace(
+            spearmans_correlation = corr,
+            spearmans_pvalue = pval,
         )
         # Share random key between ES and RL emitters
 

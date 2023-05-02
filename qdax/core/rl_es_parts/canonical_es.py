@@ -37,7 +37,7 @@ class CanonicalESConfig(VanillaESConfig):
     novelty_nearest_neighbors: int = 10
     actor_injection: bool = False
 
-class CanonicalESEmitterState(EmitterState):
+class CanonicalESEmitterState(VanillaESEmitterState):
     """Emitter State for the ES or NSES emitter.
 
     Args:
@@ -93,9 +93,26 @@ class CanonicalESEmitter(VanillaESEmitter):
 
         # Actor injection
         if self._config.actor_injection:
+            print(f"Doing actor injection x {self._config.nb_injections}")
             self._actor_injection = self._inject_actor
         else:
-            self._actor_injection = lambda x, a, p: x
+            print("Not doing actor injection")
+            self._actor_injection = lambda sample_noise, actor, parent: sample_noise
+
+        # Add a wrapper to the scoring function to handle the surrogate data
+        extended_scoring = lambda networks, random_key, extra: self._scoring_fn(
+            networks, random_key)
+
+        self._es_emitter = partial(
+            self._base_es_emitter, 
+            fitness_function=extended_scoring,
+            surrogate_data=None,
+        )
+        self._es_emitter = partial(
+            jax.jit,
+            static_argnames=("scores_fn"),
+        )(self._es_emitter)
+
 
     @partial(
         jax.jit,
@@ -135,18 +152,60 @@ class CanonicalESEmitter(VanillaESEmitter):
             ),
             random_key,
         )
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self"),
+    )
+    def _inject_actor(
+        self, 
+        sample_noise: Genotype,
+        actor: Genotype,
+        parent: Genotype,
+    ) -> Genotype:
+        """
+        Replace the last genotype of the sample_noise by the actor minus the parent.
+        """
+        # print("actor shape", jax.tree_map(lambda x: x.shape, actor))
+        # print("parent shape", jax.tree_map(lambda x: x.shape, parent))
+        # print("sample_noise shape", jax.tree_map(lambda x: x.shape, sample_noise))
+
+        # Repeat actor
+        actor = jax.tree_util.tree_map(
+            lambda x: jnp.repeat(x[0, ...], self._config.nb_injections, axis=0),
+            actor,
+        )
+        # print("repeated actor shape", jax.tree_map(lambda x: x.shape, actor))
+
+        # Get the noise that recreates the actor
+        actor_noise = jax.tree_util.tree_map(
+            lambda x, y: (x - y)/self._config.sample_sigma,
+            actor,
+            parent,
+        )
+        # print("actor_noise shape", jax.tree_map(lambda x: x.shape, actor_noise))
+
+        # Replace the n last one, with n = self._config.nb_injections
+        sample_noise = jax.tree_util.tree_map(
+            lambda x, y: jnp.concatenate([x[:-self._config.nb_injections], y], axis=0),
+            sample_noise,
+            actor_noise,
+        )
+
+        return sample_noise
 
     @partial(
         jax.jit,
         static_argnames=("self", "scores_fn", "fitness_function"),
     )
-    def _es_emitter(
+    def _base_es_emitter(
         self,
         parent: Genotype,
         optimizer_state: optax.OptState,
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
         fitness_function: Callable[[Genotype], RNGKey],
+        surrogate_data = None,
         actor: Genotype=None,
     ) -> Tuple[Genotype, optax.OptState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
@@ -166,10 +225,9 @@ class CanonicalESEmitter(VanillaESEmitter):
         random_key, subkey = jax.random.split(random_key)
 
         # Sampling mirror noise
-        sample_number = self._config.sample_number if not self._config.actor_injection else self._config.sample_number - 1
+        sample_number = self._config.sample_number
 
         # Sampling noise
-        # sample_number = sample_number 
         sample_noise = jax.tree_map(
             lambda x: jax.random.normal(
                 key=subkey,
@@ -198,15 +256,9 @@ class CanonicalESEmitter(VanillaESEmitter):
             sample_noise,
         )
 
-        # if self._config.actor_injection:
-        #     samples = jax.tree_map(
-        #         lambda x: jnp.concatenate([x, actor], axis=0),
-        #         samples,
-        #     )
-
         # Evaluating samples
         fitnesses, descriptors, extra_scores, random_key = fitness_function(
-            samples, random_key
+            samples, random_key, surrogate_data
         )
 
         extra_scores["population_fitness"] = fitnesses
