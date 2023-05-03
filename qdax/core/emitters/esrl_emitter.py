@@ -37,27 +37,22 @@ def spearman(x, y):
     A tuple of the Spearman correlation coefficient and p-value between x and y.
     """
 
-    # Compute the ranks of x and y.
-    x_ranks = jnp.argsort(x)
-    y_ranks = jnp.argsort(y)
-
-    # Compute the covariance of the ranks.
-    covariance = jnp.cov(x_ranks, y_ranks)[0, 1]
-
-    # Compute the standard deviation of the ranks.
-    standard_deviation = jnp.std(x_ranks) * jnp.std(y_ranks)
-
-    # Compute the Spearman correlation coefficient.
-    r = covariance / standard_deviation
-
-    # Compute the degrees of freedom.
-    df = x.shape[0] - 2
-
-    # Compute the critical value.
-    critical_value = jnp.sqrt((1 - r**2) / (df * (1 - r**2)))
-
-    # Return the Spearman correlation coefficient and p-value.
-    return r, jnp.less(r, critical_value).astype(jnp.float32)
+    # Compute the length of the arrays
+    n = len(x)
+    
+    # Compute the ranks of the elements in x and y
+    rank_x = jnp.argsort(jnp.argsort(x))
+    rank_y = jnp.argsort(jnp.argsort(y))
+    
+    # Compute the squared differences between the ranks
+    d = jnp.square(rank_x - rank_y)
+    
+    # Compute the t-statistic and p-value for testing non-correlation between two variables
+    t = 1 - (6 * jnp.sum(d)) / (n * (n**2 - 1))
+    p = 2 * (1 - jax.scipy.stats.norm.cdf(jnp.abs(t)))
+    
+    # Return the Spearman's rank correlation coefficient, p-value for the Spearman's rank correlation coefficient, and p-value for testing non-correlation between two variables
+    return t, p
 
 
 @dataclass

@@ -372,7 +372,7 @@ class CanonicalESEmitter(VanillaESEmitter):
             random_key=emitter_state.random_key,
             scores_fn=scores,
             optimizer_state=emitter_state.optimizer_state,
-            fitness_function=self._scoring_fn,
+            # fitness_function=self._scoring_fn,
         )
 
         metrics = self.get_metrics(
@@ -380,11 +380,12 @@ class CanonicalESEmitter(VanillaESEmitter):
             offspring,
             extra_scores,
             fitnesses,
-            # evaluations=emitter_state.metrics.evaluations + self._config.sample_number,
+            new_evaluations=self._config.sample_number,
             random_key=random_key,
         )
 
         return emitter_state.replace(  # type: ignore
+            optimizer_state=optimizer_state,
             offspring=offspring,
             novelty_archive=novelty_archive,
             generation_count=emitter_state.generation_count + 1,

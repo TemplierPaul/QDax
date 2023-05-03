@@ -413,70 +413,70 @@ class MonoCMAESEmitter(VanillaESEmitter):
         # print("Expanded", jax.tree_map(lambda x: x.shape, offspring))
         return offspring, new_cmaes_state, random_key, extra_scores
 
-    @partial(
-        jax.jit,
-        static_argnames=("self"),
-    )
-    def _canonical_update(self, 
-        parent: Genotype,
-        genotypes: Genotype,
-        fitnesses: Fitness,
-        ) -> Genotype:
-        """
-        Simulate the canonical ES update from a population of genotypes and
-        their fitnesses.
-        """
+    # @partial(
+    #     jax.jit,
+    #     static_argnames=("self"),
+    # )
+    # def _canonical_update(self, 
+    #     parent: Genotype,
+    #     genotypes: Genotype,
+    #     fitnesses: Fitness,
+    #     ) -> Genotype:
+    #     """
+    #     Simulate the canonical ES update from a population of genotypes and
+    #     their fitnesses.
+    #     """
 
-        # print("Canonical update simulation")
+    #     # print("Canonical update simulation")
 
-        ranking_indices = jnp.argsort(fitnesses, axis=0) 
-        ranks = jnp.argsort(ranking_indices, axis=0) 
-        ranks = self._config.sample_number - ranks # Inverting the ranks
+    #     ranking_indices = jnp.argsort(fitnesses, axis=0) 
+    #     ranks = jnp.argsort(ranking_indices, axis=0) 
+    #     ranks = self._config.sample_number - ranks # Inverting the ranks
         
-        mu = self._cmaes._num_best # Number of parents
+    #     mu = self._cmaes._num_best # Number of parents
 
-        weights = jnp.where(ranks <= mu, jnp.log(mu+0.5) - jnp.log(ranks), 0) 
-        weights /= jnp.sum(weights) # Normalizing the weights
+    #     weights = jnp.where(ranks <= mu, jnp.log(mu+0.5) - jnp.log(ranks), 0) 
+    #     weights /= jnp.sum(weights) # Normalizing the weights
 
-        # Get noise from population and parent
-        gradient_noise = jax.tree_map(
-            lambda x, p: x - p,
-            genotypes,
-            parent,
-        )
+    #     # Get noise from population and parent
+    #     gradient_noise = jax.tree_map(
+    #         lambda x, p: x - p,
+    #         genotypes,
+    #         parent,
+    #     )
 
-        # Reshaping rank to match shape of genotype_noise
-        weights = jax.tree_map(
-            lambda x: jnp.reshape(
-                jnp.repeat(weights.ravel(), x[0].ravel().shape[0], axis=0), x.shape
-            ),
-            gradient_noise,
-        )
+    #     # Reshaping rank to match shape of genotype_noise
+    #     weights = jax.tree_map(
+    #         lambda x: jnp.reshape(
+    #             jnp.repeat(weights.ravel(), x[0].ravel().shape[0], axis=0), x.shape
+    #         ),
+    #         gradient_noise,
+    #     )
 
-        # Computing the update
-        # Noise is multiplied by rank
-        gradient = jax.tree_map(
-            lambda noise, rank: jnp.multiply(noise, rank),
-            gradient_noise,
-            weights,
-        )
-        # Noise is summed over the sample dimension and multiplied by sigma
-        gradient = jax.tree_map(
-            lambda x: jnp.reshape(x, (self._config.sample_number, -1)),
-            gradient,
-        )
-        gradient = jax.tree_map(
-            lambda g, p: jnp.reshape(
-                jnp.sum(g, axis=0) * self._config.sample_sigma,
-                p.shape,
-            ),
-            gradient,
-            parent,
-        )
+    #     # Computing the update
+    #     # Noise is multiplied by rank
+    #     gradient = jax.tree_map(
+    #         lambda noise, rank: jnp.multiply(noise, rank),
+    #         gradient_noise,
+    #         weights,
+    #     )
+    #     # Noise is summed over the sample dimension and multiplied by sigma
+    #     gradient = jax.tree_map(
+    #         lambda x: jnp.reshape(x, (self._config.sample_number, -1)),
+    #         gradient,
+    #     )
+    #     gradient = jax.tree_map(
+    #         lambda g, p: jnp.reshape(
+    #             jnp.sum(g, axis=0) * self._config.sample_sigma,
+    #             p.shape,
+    #         ),
+    #         gradient,
+    #         parent,
+    #     )
 
-        offspring = optax.apply_updates(parent, gradient)
+    #     offspring = optax.apply_updates(parent, gradient)
 
-        return offspring
+    #     return offspring
 
     @partial(
         jax.jit,
