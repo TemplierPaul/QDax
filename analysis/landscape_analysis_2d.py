@@ -313,9 +313,9 @@ if __name__ == "__main__":
     def scores(fitnesses, descriptors) -> jnp.ndarray:
         return fitnesses    
 
-    # EM = setup_es(args)
+    EM = setup_es(args)
     
-    # for gen in plot_args.gens:
-    #     make_plot(EM, gen)
+    for gen in plot_args.gens:
+        make_plot(EM, gen)
 
     write_report(args, save_path)
