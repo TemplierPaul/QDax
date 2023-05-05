@@ -52,6 +52,7 @@ parser.add_argument('--carlies', default=False, action="store_true", help='Add C
 parser.add_argument('--elastic_pull', type=float, default=0, help='Penalization for pulling the actor too far from the ES center')
 parser.add_argument('--discount', type=float, default=0.99, help='Discount factor')
 parser.add_argument('--actor_injection', action="store_true", default=False, help='Use actor injection')
+parser.add_argument('--injection_clip', action="store_true", default=False, help='Clip actor vector norm for injection')
 parser.add_argument('--nb_injections', type=int, default=1, help='Number of actors to inject if actor_injection is True')
 parser.add_argument('--critic_training', type=int, default=1000, help='Number of critic training steps')
 parser.add_argument('--pg_training', type=int, default=1000, help='Number of PG training steps')
@@ -80,7 +81,7 @@ parser.add_argument('--logall', default=False, action="store_true", help='Lot at
 # parse arguments
 args = parser.parse_args()
 
-if args.carlies or args.testrl or args.surrogate:
+if args.carlies or args.testrl or args.surrogate or args.actor_injection:
     args.rl = True
     # args.actor_injection = False
 
@@ -266,6 +267,7 @@ elif args.es in ["canonical"]:
         actor_injection = args.actor_injection,
         nb_injections = args.nb_injections,
         episode_length = args.episode_length,
+        injection_clipping = args.injection_clip,
     )
 
     es_emitter = CanonicalESEmitter(

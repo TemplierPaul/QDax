@@ -12,6 +12,7 @@ import optax
 from qdax.core.emitters.emitter import EmitterState
 
 from qdax.types import Descriptor, ExtraScores, Fitness, Genotype, RNGKey
+from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 
 @dataclass
 class CanonicalESConfig(VanillaESConfig):
@@ -36,6 +37,7 @@ class CanonicalESConfig(VanillaESConfig):
     learning_rate: float = 0.01
     novelty_nearest_neighbors: int = 10
     actor_injection: bool = False
+    injection_clipping: bool = False
 
 class CanonicalESEmitterState(VanillaESEmitterState):
     """Emitter State for the ES or NSES emitter.
@@ -97,7 +99,23 @@ class CanonicalESEmitter(VanillaESEmitter):
             self._actor_injection = self._inject_actor
         else:
             print("Not doing actor injection")
-            self._actor_injection = lambda sample_noise, actor, parent: sample_noise
+            def no_injection(sample_noise, actor, parent):
+                # Applying noise
+                networks = jax.tree_map(
+                    lambda x: jnp.repeat(x, self._config.sample_number, axis=0),
+                    parent,
+                )
+                networks = jax.tree_map(
+                    lambda mean, noise: mean + self._config.sample_sigma * noise,
+                    networks,
+                    sample_noise,
+                )
+
+                norm = -jnp.inf
+
+                return sample_noise, networks, norm
+            
+            self._actor_injection = no_injection
 
         # Add a wrapper to the scoring function to handle the surrogate data
         extended_scoring = lambda networks, random_key, extra: self._scoring_fn(
@@ -113,6 +131,12 @@ class CanonicalESEmitter(VanillaESEmitter):
             static_argnames=("scores_fn"),
         )(self._es_emitter)
 
+        self.tree_def = None
+        self.layer_sizes = None
+        self.split_indices = None
+
+        self.c_y = jnp.inf
+
     @property
     def config_string(self):
         """Returns a string describing the config."""
@@ -122,13 +146,15 @@ class CanonicalESEmitter(VanillaESEmitter):
         s += f"- lr {self._config.learning_rate} "
         if self._config.actor_injection:
             s += f"| AI {self._config.nb_injections}"
+            if self._config.injection_clipping:
+                s += " (clip)"
         return s
 
 
-    @partial(
-        jax.jit,
-        static_argnames=("self",),
-    )
+    # @partial(
+    #     jax.jit,
+    #     static_argnames=("self",),
+    # )
     def init(
         self, init_genotypes: Genotype, random_key: RNGKey
     ) -> Tuple[VanillaESEmitterState, RNGKey]:
@@ -153,6 +179,37 @@ class CanonicalESEmitter(VanillaESEmitter):
             self._total_generations, self._num_descriptors
         )
 
+        metrics = ESMetrics(
+            es_updates=0,
+            rl_updates=0,
+            evaluations=0,
+            actor_fitness=-jnp.inf,
+            center_fitness=-jnp.inf,
+        )
+
+        flat_variables, tree_def = tree_flatten(init_genotypes)
+        self.layer_shapes = [x.shape[1:] for x in flat_variables]
+        print("layer_shapes", self.layer_shapes)
+
+        sizes = [x.size for x in flat_variables]
+        sizes = jnp.array(sizes)
+
+        print("sizes", sizes)
+
+        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
+        n = len(vect)
+        # Scaling for injection
+        # sqrt(n) + 2n/(n + 2)
+        if self._config.injection_clipping:
+            self.c_y = jnp.sqrt(n) + 2 * n / (n + 2)
+
+        self.tree_def = tree_def
+        self.layer_sizes = sizes.tolist()
+        print("layer_sizes", self.layer_sizes)
+        self.split_indices = jnp.cumsum(jnp.array(self.layer_sizes))[:-1].tolist()
+        print("split_indices", self.split_indices)
+
+
         return (
             CanonicalESEmitterState(
                 offspring=init_genotypes,
@@ -160,6 +217,7 @@ class CanonicalESEmitter(VanillaESEmitter):
                 novelty_archive=novelty_archive,
                 random_key=random_key,
                 initial_center=init_genotypes,
+                metrics=metrics,
             ),
             random_key,
         )
@@ -177,33 +235,67 @@ class CanonicalESEmitter(VanillaESEmitter):
         """
         Replace the last genotype of the sample_noise by the actor minus the parent.
         """
+        # parent = jax.tree_util.tree_map(
+        #     lambda x: x[0],
+        #     parent,
+        # )
         # print("actor shape", jax.tree_map(lambda x: x.shape, actor))
         # print("parent shape", jax.tree_map(lambda x: x.shape, parent))
         # print("sample_noise shape", jax.tree_map(lambda x: x.shape, sample_noise))
 
+        sigma = self._config.sample_sigma
+        x_actor = self.flatten(actor)
+        # print("x_actor shape", x_actor.shape)
+        x_parent = self.flatten(parent)
+        # print("x_parent shape", x_parent.shape)
+        y_actor = (x_actor - x_parent) / sigma
+
+        norm = jnp.linalg.norm(y_actor)
+        # alpha clip self.c_y / norm to 1
+        norm = jnp.minimum(1, self.c_y / norm)
+        normed_y_actor = norm * y_actor
+        normed_y_net = self.unflatten(normed_y_actor)
+        # Add 1 dimension
+        normed_y_net = jax.tree_map(
+            lambda x: x[None, ...],
+            normed_y_net,
+        )
+
+        # Applying noise
+        networks = jax.tree_map(
+            lambda x: jnp.repeat(x, self._config.sample_number, axis=0),
+            parent,
+        )
+        # print("networks shape", jax.tree_map(lambda x: x.shape, networks))
+        networks = jax.tree_map(
+            lambda mean, noise: mean + self._config.sample_sigma * noise,
+            networks,
+            sample_noise,
+        )
+        # print("networks shape", jax.tree_map(lambda x: x.shape, networks))
+
         # Repeat actor
         actor = jax.tree_util.tree_map(
-            lambda x: jnp.repeat(x[0, ...], self._config.nb_injections, axis=0),
+            lambda x: jnp.repeat(x[None, ...], self._config.nb_injections, axis=0),
             actor,
         )
         # print("repeated actor shape", jax.tree_map(lambda x: x.shape, actor))
 
-        # Get the noise that recreates the actor
-        actor_noise = jax.tree_util.tree_map(
-            lambda x, y: (x - y)/self._config.sample_sigma,
-            actor,
-            parent,
-        )
-        # print("actor_noise shape", jax.tree_map(lambda x: x.shape, actor_noise))
-
         # Replace the n last one, with n = self._config.nb_injections
+        networks = jax.tree_util.tree_map(
+            lambda x, y: jnp.concatenate([x[:-self._config.nb_injections], y], axis=0),
+            networks,
+            actor,
+        )
+
+        # replace actor in sample_noise by scaled_actor
         sample_noise = jax.tree_util.tree_map(
             lambda x, y: jnp.concatenate([x[:-self._config.nb_injections], y], axis=0),
             sample_noise,
-            actor_noise,
+            normed_y_net,
         )
 
-        return sample_noise
+        return sample_noise, networks, norm
 
     @partial(
         jax.jit,
@@ -248,29 +340,18 @@ class CanonicalESEmitter(VanillaESEmitter):
         )
 
         # Actor injection if needed in config and if actor is not None
-        sample_noise = self._actor_injection(
+        gradient_noise, networks, norm_factor = self._actor_injection(
             sample_noise,
             actor,
             parent,
         )
 
-        gradient_noise = sample_noise
-
-        # Applying noise
-        samples = jax.tree_map(
-            lambda x: jnp.repeat(x, sample_number, axis=0),
-            parent,
-        )
-        samples = jax.tree_map(
-            lambda mean, noise: mean + self._config.sample_sigma * noise,
-            samples,
-            sample_noise,
-        )
-
         # Evaluating samples
         fitnesses, descriptors, extra_scores, random_key = fitness_function(
-            samples, random_key, surrogate_data
+            networks, random_key, surrogate_data
         )
+
+        extra_scores["injection_norm"] = norm_factor
 
         extra_scores["population_fitness"] = fitnesses
 

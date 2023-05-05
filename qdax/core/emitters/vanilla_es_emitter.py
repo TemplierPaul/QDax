@@ -142,6 +142,7 @@ class VanillaESConfig:
     novelty_nearest_neighbors: int = 10
     actor_injection: bool = False
     nb_injections: int = 1
+    injection_clipping = False
 
 
 class VanillaESEmitterState(EmitterState):
@@ -290,7 +291,7 @@ class VanillaESEmitter(Emitter):
         self.layer_shapes = [x.shape[1:] for x in flat_variables]
         # print("layer_shapes", self.layer_shapes)
 
-        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
+        # vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
         sizes = [x.size for x in flat_variables]
         sizes = jnp.array(sizes)
 
@@ -584,7 +585,7 @@ class VanillaESEmitter(Emitter):
             optimizer_state=emitter_state.optimizer_state,
             random_key=emitter_state.random_key,
             scores_fn=scores,
-            actor=genotypes,
+            # actor=genotypes,
             # fitness_function=self._scoring_fn,
         )
 

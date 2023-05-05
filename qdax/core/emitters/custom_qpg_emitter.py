@@ -186,7 +186,7 @@ class CustomQualityPGEmitter(Emitter):
         self.critic_layer_shapes = [x.shape for x in flat_variables]
         # print("critic layer shapes", self.critic_layer_shapes)
 
-        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
+        # vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
         sizes = [x.size for x in flat_variables]
         sizes = jnp.array(sizes)
 

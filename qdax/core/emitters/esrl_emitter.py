@@ -401,12 +401,7 @@ class ESRLEmitter(Emitter):
 
         # Define scores for es process
         def scores(fitnesses: Fitness, descriptors: Descriptor) -> jnp.ndarray:
-            if self.es_emitter._config.nses_emitter:
-                return novelty_archive.novelty(
-                    descriptors, self.es_emitter._config.novelty_nearest_neighbors
-                )
-            else:
-                return fitnesses
+            return fitnesses
 
         base_optim_state = emitter_state.es_state.optimizer_state
         # Run es process
@@ -483,6 +478,8 @@ class ESRLEmitter(Emitter):
         state = ESRLEmitterState(es_state, rl_state)
         state = state.set_metrics(metrics)
         state = state.set_key(random_key)
+        # print("ES offspring", jax.tree_map(lambda x: x.shape, offspring))
+
         return state, extra_scores
     
     @partial(
@@ -570,6 +567,8 @@ class ESRLEmitter(Emitter):
         state = ESRLEmitterState(es_state, rl_state)
         state = state.set_metrics(metrics)
         state = state.set_key(random_key)
+        # print("ES offspring", jax.tree_map(lambda x: x.shape, offspring))
+
         return state, extra_scores
     
     @partial(

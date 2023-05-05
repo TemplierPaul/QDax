@@ -72,7 +72,11 @@ def setup_es(args):
     # Environment #
 
     # Init environment
-    env = environments.create(args.env_name, episode_length=args.episode_length)
+    env = environments.create(
+        args.env_name, 
+        episode_length=args.episode_length,
+        fixed_init_state= args.deterministic
+        )
 
     # Init a random key
     random_key = jax.random.PRNGKey(args.seed)
