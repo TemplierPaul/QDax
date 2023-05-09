@@ -93,6 +93,7 @@ class CustomQualityPGEmitter(Emitter):
     @property
     def config_string(self):
         s = f"TD3 {self._config.num_critic_training_steps} - PG {self._config.num_pg_training_steps} "
+        s += f"- lr A {self._config.actor_learning_rate} / C {self._config.critic_learning_rate}"
         if self._config.elastic_pull > 0:
             s += f"- \u03B5 {self._config.elastic_pull}" # \u03B5 is epsilon
         return s
