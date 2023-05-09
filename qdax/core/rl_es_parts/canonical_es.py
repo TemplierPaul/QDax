@@ -34,7 +34,7 @@ class CanonicalESConfig(VanillaESConfig):
     sample_number: int = 1000
     canonical_mu: int = int(sample_number / 2)
     sample_sigma: float = 0.02
-    learning_rate: float = 0.01
+    # learning_rate: float = 0.01
     novelty_nearest_neighbors: int = 10
     actor_injection: bool = False
     injection_clipping: bool = False
@@ -143,7 +143,7 @@ class CanonicalESEmitter(VanillaESEmitter):
         s = f"Canonical {self._config.sample_number} "
         s += f"- \u03C3 {self._config.sample_sigma} "
         # learning rate
-        s += f"- lr {self._config.learning_rate} "
+        # s += f"- lr {self._config.learning_rate} "
         if self._config.actor_injection:
             s += f"| AI {self._config.nb_injections}"
             if self._config.injection_clipping:

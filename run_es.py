@@ -38,7 +38,7 @@ parser.add_argument('--es_sigma', type=float, default=0.01, help='Standard devia
 parser.add_argument('--sample_mirror', type=bool, default=True, help='Mirror sampling in ES')
 parser.add_argument('--sample_rank_norm', type=bool, default=True, help='Rank normalization in ES')
 parser.add_argument('--adam_optimizer', type=bool, default=True, help='Use Adam optimizer instead of SGD')
-parser.add_argument('--learning_rate', type=float, default=0.01, help='Learning rate for Adam optimizer')
+parser.add_argument('--learning_rate', type=float, default=0.01, help='Learning rate for ES optimizer')
 parser.add_argument('--l2_coefficient', type=float, default=0.02, help='L2 coefficient for Adam optimizer')
 
 # NSES
@@ -56,6 +56,8 @@ parser.add_argument('--injection_clip', action="store_true", default=False, help
 parser.add_argument('--nb_injections', type=int, default=1, help='Number of actors to inject if actor_injection is True')
 parser.add_argument('--critic_training', type=int, default=1000, help='Number of critic training steps')
 parser.add_argument('--pg_training', type=int, default=1000, help='Number of PG training steps')
+parser.add_argument('--actor_lr', type=float, default=3e-4, help='Learning rate for actor Adam optimizer')
+parser.add_argument('--critic_lr', type=float, default=3e-4, help='Learning rate for critic Adam optimizer')
 
 # RL + ES
 parser.add_argument('--surrogate', default=False, action="store_true", help='Use surrogate')
@@ -262,7 +264,7 @@ elif args.es in ["canonical"]:
         sample_number=args.pop,
         canonical_mu=int(args.pop / 2),
         sample_sigma=args.es_sigma,
-        learning_rate=args.learning_rate,
+        # learning_rate=args.learning_rate,
         novelty_nearest_neighbors=args.novelty_nearest_neighbors,
         actor_injection = args.actor_injection,
         nb_injections = args.nb_injections,
@@ -323,9 +325,9 @@ if args.rl:
         # TD3 params
         replay_buffer_size = 1000000,
         critic_hidden_layer_size = args.critic_hidden_layer_sizes,
-        critic_learning_rate = 3e-4,
-        actor_learning_rate = 3e-4,
-        policy_learning_rate = 1e-3,
+        critic_learning_rate = args.critic_lr,
+        actor_learning_rate = args.actor_lr,
+        policy_learning_rate = args.actor_lr,
         noise_clip = 0.5,
         policy_noise = 0.2,
         discount = args.discount,
