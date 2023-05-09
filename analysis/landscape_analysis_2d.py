@@ -74,6 +74,7 @@ def plot2d(X, Y, Z, save=None, title="2d interpolation"):
     # save
     if save is not None:
         plt.savefig(save)
+        plt.close()
     # plt.show()
 
 import plotly.graph_objs as go
@@ -226,6 +227,7 @@ def make_plot(EM, gen):
     print(f"Saved as {save_path + f'/3dsurrogate_{gen}.html'}")
 
 def write_report(args, save_path):
+    import glob
     # Create report_id.md file
     job_id = args.jobid
     # make file
@@ -238,12 +240,19 @@ def write_report(args, save_path):
         # Config
         f.write(f"## {args.config}\n")
         # Plots
+        evo_paths = glob.glob(save_path + f"/2dpath_*.png")
+        print("Plots for evolution paths:", evo_paths)
+        for p in evo_paths:
+            # parse
+            elts = p.replace(save_path + "/2dpath_", "").replace(".png", "").split("_")
+            f.write(f"## Path: {' + '.join(elts)}\n")
+            f.write(f"![]({job_id}/2dpath_{'_'.join(elts)}.png)\n")
+        f.write("\n## Fitness landscape\n")
         # Table top
         f.write("| Generation |          True fitness          |       Surrogate fitness         |\n")
         f.write("| :--------: | :----------------------------: | :----------------------------: |\n")
         # Table body
         # get .png files 
-        import glob
         gens = glob.glob(save_path + f"/2dlandscape_*.png")
         print(gens)
         gens = [int(re.findall(r"\d+", gen)[2]) for gen in gens]
@@ -262,6 +271,8 @@ if __name__ == "__main__":
     parser.add_argument("save_path", type=str, help="Path to the folder containing the config.json")
     # List of generations to plot
     parser.add_argument("--gens", type=int, nargs="+", help="Generations to plot", default=None)
+    # --report flag
+    parser.add_argument("--report", action="store_true", help="Create report.md file")
     plot_args = parser.parse_args()
     save_path = plot_args.save_path
     print(plot_args)
@@ -313,9 +324,10 @@ if __name__ == "__main__":
     def scores(fitnesses, descriptors) -> jnp.ndarray:
         return fitnesses    
 
-    EM = setup_es(args)
-    
-    for gen in plot_args.gens:
-        make_plot(EM, gen)
+    if not plot_args.report:
+        EM = setup_es(args)
+        
+        for gen in plot_args.gens:
+            make_plot(EM, gen)
 
     write_report(args, save_path)
