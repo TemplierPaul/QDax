@@ -76,6 +76,9 @@ class ESMetrics:
     # RL - Canonical metrics
     canonical_rl_cosine: float = -jnp.inf
     canonical_rl_sign: float = -jnp.inf
+    
+    # Spearman-based surrogate ES
+    spearman_omega: float = -jnp.inf
 
 class ESRepertoire(MapElitesRepertoire):
     """ A MapElitesRepertoire for ES that keeps the fitness of the last added ES center for logging

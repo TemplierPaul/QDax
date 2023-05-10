@@ -63,6 +63,8 @@ parser.add_argument('--critic_lr', type=float, default=3e-4, help='Learning rate
 parser.add_argument('--surrogate', default=False, action="store_true", help='Use surrogate')
 parser.add_argument('--surrogate_batch', type=int, default=1024, help='Number of samples to use for surrogate evaluation')
 parser.add_argument('--surrogate_omega', type=float, default=0.6, help='Probability of using surrogate')
+parser.add_argument('--spearman', default=False, action="store_true", help='Use surrogate with spearman-ajusted probability')
+# parser.add_argument('--spearman_decay', type=float, default=1.0, help='Spearman decay')
 
 # File output
 parser.add_argument('--output', type=str, default='', help='Output file')
@@ -83,7 +85,7 @@ parser.add_argument('--logall', default=False, action="store_true", help='Lot at
 # parse arguments
 args = parser.parse_args()
 
-if args.carlies or args.testrl or args.surrogate or args.actor_injection:
+if args.carlies or args.testrl or args.surrogate or args.spearman or args.actor_injection:
     args.rl = True
     # args.actor_injection = False
 
@@ -127,6 +129,8 @@ if args.testrl:
     suffix = '-TestRL'
 if args.surrogate:
     suffix = '-Surrogate'
+if args.spearman:
+    suffix = '-Spearman'
 args.algo += f"{suffix}"
 
 
@@ -177,6 +181,7 @@ from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitter
 from qdax.core.emitters.test_gradients import TestGradientsEmitter
 from qdax.core.emitters.carlies_emitter import CARLIES
 from qdax.core.emitters.surrogate_es_emitter import SurrogateESConfig, SurrogateESEmitter
+from qdax.core.emitters.spearman_surrogate import SpearmanSurrogateEmitter
 
 
 ###############
@@ -360,7 +365,13 @@ if args.rl:
             surrogate_omega=args.surrogate_omega,
         )
         esrl_emitter_type = SurrogateESEmitter
-
+    elif args.spearman:
+        esrl_config = ESRLConfig(
+            es_config=es_config,
+            rl_config=rl_config,
+        )
+        esrl_emitter_type = SpearmanSurrogateEmitter
+        
     else:
         esrl_config = ESRLConfig(
             es_config=es_config,
