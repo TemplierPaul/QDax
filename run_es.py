@@ -13,7 +13,7 @@ parser.add_argument(
     type=str, 
     default="walker2d_uni", 
     help='Environment name', 
-    choices=['ant_uni', 'hopper_uni', 'walker2d_uni', 'halfcheetah_uni', 'humanoid_uni', 'ant_omni', 'humanoid_omni', 'anttrap'],
+    # choices=['ant_uni', 'hopper_uni', 'walker2d_uni', 'halfcheetah_uni', 'humanoid_uni', 'ant_omni', 'humanoid_omni', 'anttrap'],
     dest='env_name'
     )
 parser.add_argument('--episode_length', type=int, default=1000, help='Number of steps per episode')
