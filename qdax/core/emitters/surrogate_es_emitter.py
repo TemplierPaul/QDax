@@ -30,7 +30,8 @@ class SurrogateESEmitter(TestGradientsEmitter):
     @property
     def config_string(self):
         s = self.es_emitter.config_string + " | " + self.rl_emitter.config_string
-        s += f" | \u03C9 {self._config.surrogate_omega} ({self._config.rl_config.surrogate_batch})" # \u03C9 is omega
+        if self._config.surrogate_omega > 0:
+            s += f" | \u03C9 {self._config.surrogate_omega} ({self._config.rl_config.surrogate_batch})" # \u03C9 is omega
         return s
 
     @partial(

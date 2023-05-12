@@ -36,3 +36,7 @@ def get_feet_contact_proportion(data: QDTransition, mask: jnp.ndarray) -> Descri
     descriptors = descriptors / jnp.sum(1.0 - mask, axis=1)
 
     return descriptors
+
+def get_no_descriptor(data: QDTransition, mask: jnp.ndarray) -> Descriptor:
+    """Return a zero descriptor in 2d."""
+    return jnp.zeros((data.state_desc.shape[0], 2))

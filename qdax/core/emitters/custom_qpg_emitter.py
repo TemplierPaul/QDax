@@ -670,3 +670,93 @@ class CustomQualityPGEmitter(Emitter):
         surrogate = jnp.mean(q1_action)
         return surrogate
 
+
+
+class ESTargetQualityPGEmitter(CustomQualityPGEmitter):
+    """
+    QPG Emitter with ES center as target policy for the critic update
+    """
+    @property
+    def config_string(self):
+        s = f"ES target | TD3 {self._config.num_critic_training_steps} - PG {self._config.num_pg_training_steps} "
+        s += f"- lr A {self._config.actor_learning_rate} / C {self._config.critic_learning_rate} "
+        if self._config.elastic_pull > 0:
+            s += f"- \u03B5 {self._config.elastic_pull}" # \u03B5 is epsilon
+        return s
+    
+    @partial(jax.jit, static_argnames=("self",))
+    def _train_critics(
+        self, emitter_state: CustomQualityPGEmitterState
+    ) -> CustomQualityPGEmitterState:
+        """Apply one gradient step to critics and to the greedy actor
+        (contained in carry in training_state), then soft update target critics
+        and target actor.
+
+        Those updates are very similar to those made in TD3.
+
+        Args:
+            emitter_state: actual emitter state
+
+        Returns:
+            New emitter state where the critic and the greedy actor have been
+            updated. Optimizer states have also been updated in the process.
+        """
+
+        # Sample a batch of transitions in the buffer
+        random_key = emitter_state.random_key
+        replay_buffer = emitter_state.replay_buffer
+        transitions, random_key = replay_buffer.sample(
+            random_key, sample_size=self._config.batch_size
+        )
+        
+        # es_center = emitter_state.es_center
+        es_center = jax.tree_util.tree_map(lambda x: x[0], emitter_state.es_center)
+
+        # Update Critic
+        (
+            critic_optimizer_state,
+            critic_params,
+            target_critic_params,
+            random_key,
+        ) = self._update_critic(
+            critic_params=emitter_state.critic_params,
+            target_critic_params=emitter_state.target_critic_params,
+            target_actor_params=es_center, # ES center as target policy
+            critic_optimizer_state=emitter_state.critic_optimizer_state,
+            transitions=transitions,
+            random_key=random_key,
+        )
+
+        # Update greedy actor
+        (actor_optimizer_state, actor_params, target_actor_params,) = jax.lax.cond(
+            emitter_state.steps % self._config.policy_delay == 0,
+            lambda x: self._update_actor(*x),
+            lambda _: (
+                emitter_state.actor_opt_state,
+                emitter_state.actor_params,
+                emitter_state.target_actor_params,
+            ),
+            operand=(
+                emitter_state.actor_params,
+                emitter_state.actor_opt_state,
+                emitter_state.target_actor_params,
+                emitter_state.critic_params,
+                transitions,
+                es_center,
+            ),
+        )
+
+        # Create new training state
+        new_emitter_state = emitter_state.replace(
+            critic_params=critic_params,
+            critic_optimizer_state=critic_optimizer_state,
+            actor_params=actor_params,
+            actor_opt_state=actor_optimizer_state,
+            target_critic_params=target_critic_params,
+            target_actor_params=target_actor_params,
+            random_key=random_key,
+            steps=emitter_state.steps + 1,
+            replay_buffer=replay_buffer,
+        )
+
+        return new_emitter_state  # type: ignore

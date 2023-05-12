@@ -111,7 +111,6 @@ _qdax_custom_envs = {
     },
 }
 
-
 def create(
     env_name: str,
     episode_length: int = 1000,

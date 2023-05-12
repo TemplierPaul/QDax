@@ -58,6 +58,8 @@ parser.add_argument('--critic_training', type=int, default=1000, help='Number of
 parser.add_argument('--pg_training', type=int, default=1000, help='Number of PG training steps')
 parser.add_argument('--actor_lr', type=float, default=3e-4, help='Learning rate for actor Adam optimizer')
 parser.add_argument('--critic_lr', type=float, default=3e-4, help='Learning rate for critic Adam optimizer')
+parser.add_argument('--es_target', action="store_true", default=False, help='Use ES center as critic target')
+
 
 # RL + ES
 parser.add_argument('--surrogate', default=False, action="store_true", help='Use surrogate')
@@ -88,6 +90,12 @@ args = parser.parse_args()
 if args.carlies or args.testrl or args.surrogate or args.spearman or args.actor_injection:
     args.rl = True
     # args.actor_injection = False
+
+if args.es_target and not args.rl:
+    raise ValueError("ES target requires RL")
+
+if args.injection_clip and not args.actor_injection:
+    raise ValueError("Injection clip requires actor injection")
 
 if args.debug:
     # Cheap ES to debug
@@ -175,7 +183,7 @@ from qdax.core.rl_es_parts.mono_cmaes import MonoCMAESEmitter, MonoCMAESConfig
 from qdax.core.rl_es_parts.es_utils import ES, default_es_metrics, ESMetrics
 
 from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
-from qdax.core.emitters.custom_qpg_emitter import CustomQualityPGConfig, CustomQualityPGEmitter
+from qdax.core.emitters.custom_qpg_emitter import CustomQualityPGConfig, CustomQualityPGEmitter, ESTargetQualityPGEmitter
 
 from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitter
 from qdax.core.emitters.test_gradients import TestGradientsEmitter
@@ -344,12 +352,19 @@ if args.rl:
         elastic_pull = args.elastic_pull,
         surrogate_batch = args.surrogate_batch,
     )
-        
-    rl_emitter = CustomQualityPGEmitter(
+
+    if args.es_target:
+        rl_emitter = ESTargetQualityPGEmitter(
         config=rl_config,
         policy_network=policy_network,
         env=env,
     )
+    else:
+        rl_emitter = CustomQualityPGEmitter(
+            config=rl_config,
+            policy_network=policy_network,
+            env=env,
+        )
 
     # ESRL emitter
     esrl_emitter_type = ESRLEmitter
