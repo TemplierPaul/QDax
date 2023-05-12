@@ -646,6 +646,11 @@ class VanillaESEmitter(Emitter):
                 pop_min=pop_min,
                 pop_max=pop_max,
             )
+
+        if "injection_norm" in extra_scores:
+            metrics = metrics.replace(
+                injection_norm = extra_scores["injection_norm"],
+            )
         
         # Evaluating offspring multiple time
         multi_offspring = jax.tree_util.tree_map(

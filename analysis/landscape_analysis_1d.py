@@ -119,6 +119,12 @@ if __name__ == "__main__":
         args.wandb = ""
         print(args)
 
+    config_name = args.config
+    if "TD3" not in config_name:
+        # Exit
+        print("Not a TD3 config, exiting")
+        exit()
+
     default = {
         "surrogate_batch": 1024,
         "surrogate": False

@@ -10,6 +10,11 @@ from qdax.core.rl_es_parts.es_setup import setup_es
 
 import argparse
 
+FIT_NORM = {
+    "halfcheetah_uni": (-2000, 5000),
+    "walker2d_uni": (0, 4000),
+}
+
 def net_shape(net):
     return jax.tree_map(lambda x: x.shape, net)
 
@@ -56,16 +61,20 @@ def interpolate2d(save_path, gen, n=100):
 
     return genomes, x, y
 
-def plot2d(X, Y, Z, save=None, title="2d interpolation"):
+def plot2d(X, Y, Z, save=None, title="2d interpolation", env_name=None):
     # Create a 3D surface plot
     plt.figure()
-    plt.contour(X, Y, Z, 20, cmap="viridis")
+    contour = plt.contour(X, Y, Z, 20, cmap="viridis")
+    plt.legend()
+    # plt.colorbar()
+    if env_name is not None and env_name in FIT_NORM:
+        contour.set_clim(*FIT_NORM[env_name])
+    else:
+        f_min, f_max = Z.min(), Z.max()
+        contour.set_clim(f_min, f_max)
+    plt.colorbar(contour)
     plt.scatter(0, 0, c="red", marker="x", label="ES")
     plt.scatter(1, 0, c="red", marker="o", label="Actor")
-    plt.legend()
-    plt.colorbar()
-    f_min, f_max = Z.min(), Z.max()
-    plt.clim(f_min, f_max)
     plt.xlabel("v1: ES to actor")
     plt.ylabel("v2")
     plt.title(title)
@@ -132,7 +141,7 @@ def plot3d(X, Y, Z, save=None):
         pyo.plot(fig, filename=save, auto_open=False)
     # Do not open in browser
 
-def make_plot(EM, gen):
+def make_plot(EM, gen, env_name):
     es = EM.es
     env = EM.env
     policy_network = EM.policy_network
@@ -209,7 +218,7 @@ def make_plot(EM, gen):
     # 2D plots
     # true fitness
     title = f"True fitness, gen {gen}"
-    plot2d(x_grid, y_grid, z_grid, save=save_path + f"/2dlandscape_{gen}.png", title=title)
+    plot2d(x_grid, y_grid, z_grid, save=save_path + f"/2dlandscape_{gen}.png", title=title, env_name=env_name)
     print(f"Saved as {save_path + f'/2dlandscape_{gen}.png'}")
 
     # surrogate fitness
@@ -238,7 +247,11 @@ def write_report(args, save_path):
         import datetime
         f.write(f"Date: {datetime.datetime.now()}\n  ")
         # Config
+        f.write(f"## {args.env_name}\n")
         f.write(f"## {args.config}\n")
+        if args.deterministic:
+            f.write(f"## Deterministic\n")
+        f.write(f"![]({job_id}/plot.png)\n")
         # Plots
         evo_paths = glob.glob(save_path + f"/2dpath_*.png")
         print("Plots for evolution paths:", evo_paths)
@@ -263,6 +276,13 @@ def write_report(args, save_path):
             f.write(f"| {gen} | ![]({job_id}/2dlandscape_{gen}.png) | ![]({job_id}/2dsurrogate_{gen}.png) |\n")
         # Table bottom
         f.write("\n")
+        # 1D
+        f.write("\n## 1D interpolation\n")
+        f.write("\n### True fitness\n")
+        f.write(f"![]({job_id}/interpolation.png)\n")
+        f.write("\n### Normalized comparison\n")
+        f.write(f"![]({job_id}/normalized_comparison.png)\n")
+
 
 
 if __name__ == "__main__":
@@ -310,6 +330,13 @@ if __name__ == "__main__":
         args.wandb = ""
         print(args)
 
+    config_name = args.config
+    if "TD3" not in config_name:
+        # Exit
+        print("Not a TD3 config, exiting")
+        write_report(args, save_path)
+        exit()
+
     default = {
         "surrogate_batch": 1024,
         "surrogate": False,
@@ -328,6 +355,6 @@ if __name__ == "__main__":
         EM = setup_es(args)
         
         for gen in plot_args.gens:
-            make_plot(EM, gen)
+            make_plot(EM, gen, env_name=args.env_name)
 
     write_report(args, save_path)
