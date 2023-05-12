@@ -100,7 +100,7 @@ if args.injection_clip and not args.actor_injection:
 if args.debug:
     # Cheap ES to debug
     debug_values = {
-        'env_name': 'walker2d_uni',
+        # 'env_name': 'walker2d_uni',
         'episode_length': 100,
         "pop": 10,
         'evals': 100,

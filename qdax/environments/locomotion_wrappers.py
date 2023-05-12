@@ -332,3 +332,82 @@ class NoForwardRewardWrapper(Wrapper):
         # update the reward (remove forward_reward)
         new_reward = state.reward - state.metrics[self._fd_reward_field]
         return state.replace(reward=new_reward)  # type: ignore
+
+class EmptyBDWrapper(QDEnv):
+    def __init__(
+        self,
+        env: Env,
+        env_name: str,
+        minval: Optional[List[float]] = None,
+        maxval: Optional[List[float]] = None,
+    ):
+        super().__init__(config=None)
+
+        self.env = env
+        self._env_name = env_name
+
+        if minval is None:
+            minval = jnp.ones((2,)) * (-jnp.inf)
+
+        if maxval is None:
+            maxval = jnp.ones((2,)) * jnp.inf
+
+        if len(minval) == 2 and len(maxval) == 2:
+            self._minval = jnp.array(minval)
+            self._maxval = jnp.array(maxval)
+        else:
+            raise NotImplementedError(
+                "Please make sure to give two values for each limits."
+            )
+
+    @property
+    def state_descriptor_length(self) -> int:
+        return 2
+
+    @property
+    def state_descriptor_name(self) -> str:
+        return "None"
+
+    @property
+    def state_descriptor_limits(self) -> Tuple[List[float], List[float]]:
+        return self._minval, self._maxval
+
+    @property
+    def behavior_descriptor_length(self) -> int:
+        return self.state_descriptor_length
+
+    @property
+    def behavior_descriptor_limits(self) -> Tuple[List[float], List[float]]:
+        return self.state_descriptor_limits
+
+    @property
+    def name(self) -> str:
+        return self._env_name
+    
+    @property
+    def action_size(self) -> int:
+        # print(self.env, self.env.action_size)
+        return self.env.action_size  # type: ignore
+
+    def reset(self, rng: jp.ndarray) -> State:
+        state = self.env.reset(rng)
+        state.info["state_descriptor"] = jnp.array([0.0, 0.0])
+        return state
+
+    def step(self, state: State, action: jp.ndarray) -> State:
+        state = self.env.step(state, action)
+        # get xy position of the center of gravity
+        state.info["state_descriptor"] = jnp.array([0.0, 0.0])
+        return state
+
+    @property
+    def unwrapped(self) -> Env:
+        return self.env.unwrapped
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "action_size":
+            print("action_size")
+            return self.env.action_size
+        if name == "__setstate__":
+            raise AttributeError(name)
+        return getattr(self.env, name)

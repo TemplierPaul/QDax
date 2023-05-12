@@ -8,6 +8,7 @@ from qdax.environments.base_wrappers import QDEnv, StateDescriptorResetWrapper
 from qdax.environments.bd_extractors import (
     get_feet_contact_proportion,
     get_final_xy_position,
+    get_no_descriptor,
 )
 from qdax.environments.exploration_wrappers import MazeWrapper, TrapWrapper
 from qdax.environments.humanoidtrap import HumanoidTrap
@@ -16,6 +17,7 @@ from qdax.environments.locomotion_wrappers import (
     FeetContactWrapper,
     NoForwardRewardWrapper,
     XYPositionWrapper,
+    EmptyBDWrapper
 )
 from qdax.environments.pointmaze import PointMaze
 from qdax.environments.wrappers import CompletedEvalWrapper
@@ -35,6 +37,8 @@ reward_offset = {
     "halfcheetah_uni": 9.231,
     "hopper_uni": 0.9,
     "walker2d_uni": 1.413,
+    "swimmer_qd": 0.0,
+    "grasp_qd": 0.0,
 }
 
 behavior_descriptor_extractor = {
@@ -50,6 +54,8 @@ behavior_descriptor_extractor = {
     "halfcheetah_uni": get_feet_contact_proportion,
     "hopper_uni": get_feet_contact_proportion,
     "walker2d_uni": get_feet_contact_proportion,
+    "swimmer_qd": get_no_descriptor,
+    "grasp_qd": get_no_descriptor,
 }
 
 _qdax_envs = {
@@ -110,6 +116,13 @@ _qdax_custom_envs = {
         "kwargs": [{}, {}],
     },
 }
+
+for env_name in ["swimmer_qd", "grasp_qd"]:
+    _qdax_custom_envs[env_name] = {
+        "env": env_name.split("_")[0],
+        "wrappers": [EmptyBDWrapper],
+        "kwargs": [{}, {}],
+    }
 
 def create(
     env_name: str,

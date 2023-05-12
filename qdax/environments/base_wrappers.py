@@ -60,6 +60,7 @@ class QDWrapper(QDEnv):
 
     @property
     def action_size(self) -> int:
+        # print(self.env, self.env.action_size)
         return self.env.action_size  # type: ignore
 
     @property
