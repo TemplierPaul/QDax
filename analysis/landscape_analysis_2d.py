@@ -64,7 +64,7 @@ def interpolate2d(save_path, gen, n=100):
 def plot2d(X, Y, Z, save=None, title="2d interpolation", env_name=None):
     # Create a 3D surface plot
     plt.figure()
-    contour = plt.contour(X, Y, Z, 20, cmap="viridis")
+    contour = plt.contourf(X, Y, Z, 20, cmap="viridis")
     plt.legend()
     # plt.colorbar()
     if env_name is not None and env_name in FIT_NORM:

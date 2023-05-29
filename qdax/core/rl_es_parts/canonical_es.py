@@ -1,5 +1,10 @@
 from __future__ import annotations
-from qdax.core.emitters.vanilla_es_emitter import VanillaESConfig, VanillaESEmitterState, VanillaESEmitter, NoveltyArchive
+from qdax.core.emitters.vanilla_es_emitter import (
+    VanillaESConfig,
+    VanillaESEmitterState,
+    VanillaESEmitter,
+    NoveltyArchive,
+)
 from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 
 from dataclasses import dataclass
@@ -13,6 +18,7 @@ from qdax.core.emitters.emitter import EmitterState
 
 from qdax.types import Descriptor, ExtraScores, Fitness, Genotype, RNGKey
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
+
 
 @dataclass
 class CanonicalESConfig(VanillaESConfig):
@@ -39,6 +45,7 @@ class CanonicalESConfig(VanillaESConfig):
     actor_injection: bool = False
     injection_clipping: bool = False
 
+
 class CanonicalESEmitterState(VanillaESEmitterState):
     """Emitter State for the ES or NSES emitter.
 
@@ -54,7 +61,7 @@ class CanonicalESEmitterState(VanillaESEmitterState):
     generation_count: int
     novelty_archive: NoveltyArchive
     random_key: RNGKey
-    optimizer_state: optax.OptState = None # Not used by canonical ES
+    optimizer_state: optax.OptState = None  # Not used by canonical ES
     initial_center: Genotype = None
     metrics: ESMetrics = ESMetrics()
 
@@ -64,10 +71,9 @@ class CanonicalESEmitter(VanillaESEmitter):
     Emitter allowing to reproduce an ES or NSES emitter with
     a passive archive. This emitter never sample from the reperoire.
 
-    Uses OpenAI ES as optimizer.
-
     One can choose between ES and NSES by setting nses_emitter boolean.
     """
+
     def __init__(
         self,
         config: VanillaESConfig,
@@ -99,6 +105,7 @@ class CanonicalESEmitter(VanillaESEmitter):
             self._actor_injection = self._inject_actor
         else:
             print("Not doing actor injection")
+
             def no_injection(sample_noise, actor, parent):
                 # Applying noise
                 networks = jax.tree_map(
@@ -114,15 +121,16 @@ class CanonicalESEmitter(VanillaESEmitter):
                 norm = -jnp.inf
 
                 return sample_noise, networks, norm
-            
+
             self._actor_injection = no_injection
 
         # Add a wrapper to the scoring function to handle the surrogate data
         extended_scoring = lambda networks, random_key, extra: self._scoring_fn(
-            networks, random_key)
+            networks, random_key
+        )
 
         self._es_emitter = partial(
-            self._base_es_emitter, 
+            self._base_es_emitter,
             fitness_function=extended_scoring,
             surrogate_data=None,
         )
@@ -149,7 +157,6 @@ class CanonicalESEmitter(VanillaESEmitter):
             if self._config.injection_clipping:
                 s += " (clip)"
         return s
-
 
     # @partial(
     #     jax.jit,
@@ -209,7 +216,6 @@ class CanonicalESEmitter(VanillaESEmitter):
         self.split_indices = jnp.cumsum(jnp.array(self.layer_sizes))[:-1].tolist()
         print("split_indices", self.split_indices)
 
-
         return (
             CanonicalESEmitterState(
                 offspring=init_genotypes,
@@ -221,13 +227,13 @@ class CanonicalESEmitter(VanillaESEmitter):
             ),
             random_key,
         )
-    
+
     @partial(
         jax.jit,
         static_argnames=("self"),
     )
     def _inject_actor(
-        self, 
+        self,
         sample_noise: Genotype,
         actor: Genotype,
         parent: Genotype,
@@ -283,14 +289,14 @@ class CanonicalESEmitter(VanillaESEmitter):
 
         # Replace the n last one, with n = self._config.nb_injections
         networks = jax.tree_util.tree_map(
-            lambda x, y: jnp.concatenate([x[:-self._config.nb_injections], y], axis=0),
+            lambda x, y: jnp.concatenate([x[: -self._config.nb_injections], y], axis=0),
             networks,
             actor,
         )
 
         # replace actor in sample_noise by scaled_actor
         sample_noise = jax.tree_util.tree_map(
-            lambda x, y: jnp.concatenate([x[:-self._config.nb_injections], y], axis=0),
+            lambda x, y: jnp.concatenate([x[: -self._config.nb_injections], y], axis=0),
             sample_noise,
             normed_y_net,
         )
@@ -308,8 +314,8 @@ class CanonicalESEmitter(VanillaESEmitter):
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
         fitness_function: Callable[[Genotype], RNGKey],
-        surrogate_data = None,
-        actor: Genotype=None,
+        surrogate_data=None,
+        actor: Genotype = None,
     ) -> Tuple[Genotype, optax.OptState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
         the fitnesses and descriptors fo its es-samples, return its
@@ -358,14 +364,14 @@ class CanonicalESEmitter(VanillaESEmitter):
         # Computing rank, with or without normalisation
         scores = scores_fn(fitnesses, descriptors)
 
-        ranking_indices = jnp.argsort(scores, axis=0) 
-        ranks = jnp.argsort(ranking_indices, axis=0) 
-        ranks = self._config.sample_number - ranks # Inverting the ranks
-        
-        mu = self._config.canonical_mu # Number of parents
+        ranking_indices = jnp.argsort(scores, axis=0)
+        ranks = jnp.argsort(ranking_indices, axis=0)
+        ranks = self._config.sample_number - ranks  # Inverting the ranks
 
-        weights = jnp.where(ranks <= mu, jnp.log(mu+0.5) - jnp.log(ranks), 0) 
-        weights /= jnp.sum(weights) # Normalizing the weights
+        mu = self._config.canonical_mu  # Number of parents
+
+        weights = jnp.where(ranks <= mu, jnp.log(mu + 0.5) - jnp.log(ranks), 0)
+        weights /= jnp.sum(weights)  # Normalizing the weights
 
         # Reshaping rank to match shape of genotype_noise
         weights = jax.tree_map(
@@ -473,5 +479,3 @@ class CanonicalESEmitter(VanillaESEmitter):
             random_key=random_key,
             metrics=metrics,
         )
-    
-
