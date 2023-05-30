@@ -766,37 +766,47 @@ if args.plot:
     # Check the number of dimensions of the descriptors
     if len(repertoire.descriptors.shape) == 2:
         # create the plots and the grid
-        fig, axes = plot_map_elites_results(
-            env_steps=env_steps,
-            metrics=all_metrics,
-            repertoire=repertoire,
-            min_bd=args.min_bd,
-            max_bd=args.max_bd,
-        )
+        try:
+            fig, axes = plot_map_elites_results(
+                env_steps=env_steps,
+                metrics=all_metrics,
+                repertoire=repertoire,
+                min_bd=args.min_bd,
+                max_bd=args.max_bd,
+            )
 
-        import matplotlib.pyplot as plt
+            import matplotlib.pyplot as plt
 
-        plt.savefig(plot_file)
+            plt.savefig(plot_file)
+
+        except ValueError:
+            print("Error plotting results")
 
         # Log the repertoire plot
         if wandb_run:
-            from qdax.utils.plotting import plot_2d_map_elites_repertoire
+            try:
+                from qdax.utils.plotting import plot_2d_map_elites_repertoire
 
-            fig, ax = plot_2d_map_elites_repertoire(
-                centroids=repertoire.centroids,
-                repertoire_fitnesses=repertoire.fitnesses,
-                minval=args.min_bd,
-                maxval=args.max_bd,
-                repertoire_descriptors=repertoire.descriptors,
-            )
-            wandb_run.log({"archive": wandb.Image(fig)})
+                fig, ax = plot_2d_map_elites_repertoire(
+                    centroids=repertoire.centroids,
+                    repertoire_fitnesses=repertoire.fitnesses,
+                    minval=args.min_bd,
+                    maxval=args.max_bd,
+                    repertoire_descriptors=repertoire.descriptors,
+                )
+                wandb_run.log({"archive": wandb.Image(fig)})
+            except Exception:
+                print("Error plotting repertoire")
 
-    html_content = repertoire.record_video(env, policy_network)
-    video_file = plot_file.replace(".png", ".html")
-    with open(video_file, "w") as file:
-        file.write(html_content)
+    try:
+        html_content = repertoire.record_video(env, policy_network)
+        video_file = plot_file.replace(".png", ".html")
+        with open(video_file, "w") as file:
+            file.write(html_content)
+        # Log the plot
+        if wandb_run:
+            wandb.log({"best_agent": wandb.Html(html_content)})
+            wandb.finish()
 
-    # Log the plot
-    if wandb_run:
-        wandb.log({"best_agent": wandb.Html(html_content)})
-        wandb.finish()
+    except Exception:
+        print("Error recording video")
