@@ -273,10 +273,10 @@ class CanonicalESEmitter(VanillaESEmitter):
         normed_y_actor = norm * y_actor
         normed_y_net = self.unflatten(normed_y_actor)
         # Add 1 dimension
-        normed_y_net = jax.tree_map(
-            lambda x: x[None, ...],
-            normed_y_net,
-        )
+        # normed_y_net = jax.tree_map(
+        #     lambda x: x[None, ...],
+        #     normed_y_net,
+        # )
 
         # Applying noise
         networks = jax.tree_map(
@@ -305,12 +305,27 @@ class CanonicalESEmitter(VanillaESEmitter):
             actor,
         )
 
+        # print("networks", jax.tree_map(lambda x: x.shape, networks))
+
+        # Repeat normed_y_net
+        normed_y_net = jax.tree_util.tree_map(
+            lambda x: jnp.repeat(x[None, ...], self._config.nb_injections, axis=0),
+            normed_y_net,
+        )
+
+        # print("normed_y_net", jax.tree_map(lambda x: x.shape, normed_y_net))
+
+        # print(
+        # "sample_noise without actor", jax.tree_map(lambda x: x.shape, sample_noise)
+        # )
+
         # replace actor in sample_noise by scaled_actor
         sample_noise = jax.tree_util.tree_map(
             lambda x, y: jnp.concatenate([x[: -self._config.nb_injections], y], axis=0),
             sample_noise,
             normed_y_net,
         )
+        # print("sample_noise with actor", jax.tree_map(lambda x: x.shape, sample_noise))
 
         return sample_noise, networks, norm
 

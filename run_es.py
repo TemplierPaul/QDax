@@ -601,6 +601,8 @@ if args.rl:
         rl_emitter=rl_emitter,
     )
 
+    print(f"ES-RL emitter type: {esrl_emitter_type}")
+
 else:
     emitter = es_emitter
 
