@@ -10,7 +10,12 @@ import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 import optax
 
-from qdax.core.emitters.vanilla_es_emitter import VanillaESConfig, VanillaESEmitterState, VanillaESEmitter, NoveltyArchive
+from qdax.core.emitters.vanilla_es_emitter import (
+    VanillaESConfig,
+    VanillaESEmitterState,
+    VanillaESEmitter,
+    NoveltyArchive,
+)
 from qdax.types import Descriptor, ExtraScores, Fitness, Genotype, RNGKey
 from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.emitters.emitter import Emitter, EmitterState
@@ -27,6 +32,7 @@ from qdax.core.cmaes import CMAES, CMAESState
 @dataclass
 class MonoCMAESConfig(VanillaESConfig):
     """Configuration for the CMAES with mono solution emitter."""
+
     nses_emitter: bool = False
     sample_number: int = 1000
     sample_sigma: float = 1e-3
@@ -55,11 +61,14 @@ class MonoCMAESEmitter(VanillaESEmitter):
 
     Uses CMAES as optimizer.
     """
-    
+
     def __init__(
         self,
         config: MonoCMAESConfig,
-        scoring_fn: Callable[
+        rollout_fn: Callable[
+            [Genotype, RNGKey], Tuple[Fitness, Descriptor, ExtraScores, RNGKey]
+        ],
+        eval_fn: Callable[
             [Genotype, RNGKey], Tuple[Fitness, Descriptor, ExtraScores, RNGKey]
         ],
         total_generations: int = 1,
@@ -78,10 +87,11 @@ class MonoCMAESEmitter(VanillaESEmitter):
         """
 
         self._config = config
-        self._scoring_fn = scoring_fn
+        self._eval_fn = eval_fn
+        self._rollout_fn = rollout_fn
         self._total_generations = total_generations
         self._num_descriptors = num_descriptors
-        
+
         # define a CMAES instance
         self._cmaes = None
         self.c_y = jnp.inf
@@ -98,27 +108,28 @@ class MonoCMAESEmitter(VanillaESEmitter):
             self._actor_injection = self._inject_actor
         else:
             print("Not doing actor injection")
+
             def no_injection(
-                    genomes: Genotype,
-                    actor: Genotype,
-                    invsqrt_cov: jnp.ndarray,
-                    center: Genotype,
-                    sigma: float,
-                ) -> Tuple[Genotype, Genotype, float]:
-                
+                genomes: Genotype,
+                actor: Genotype,
+                invsqrt_cov: jnp.ndarray,
+                center: Genotype,
+                sigma: float,
+            ) -> Tuple[Genotype, Genotype, float]:
                 networks = jax.vmap(self.unflatten)(genomes)
                 norm = -jnp.inf
 
                 return genomes, networks, norm
-            
+
             self._actor_injection = no_injection
 
         # Add a wrapper to the scoring function to handle the surrogate data
-        extended_scoring = lambda networks, random_key, extra: self._scoring_fn(
-            networks, random_key)
+        extended_scoring = lambda networks, random_key, extra: self.rollout_fn(
+            networks, random_key
+        )
 
         self._es_emitter = partial(
-            self._base_es_emitter, 
+            self._base_es_emitter,
             fitness_function=extended_scoring,
             surrogate_data=None,
         )
@@ -132,6 +143,8 @@ class MonoCMAESEmitter(VanillaESEmitter):
         """Returns a string describing the config."""
         s = f"CMAES {self._config.sample_number} "
         s += f"- \u03C3 {self._config.sample_sigma} "
+        if self._config.explo_noise > 0:
+            s += f"| explo {self._config.explo_noise} "
         if self._config.actor_injection:
             s += f"| AI {self._config.nb_injections}"
             if self._config.injection_clipping:
@@ -187,8 +200,8 @@ class MonoCMAESEmitter(VanillaESEmitter):
             search_dim=genotype_dim,
             # no need for fitness function in that specific case
             fitness_function=None,  # type: ignore
-            num_best= self._config.sample_number // 2,
-            init_sigma= self._config.sample_sigma,
+            num_best=self._config.sample_number // 2,
+            init_sigma=self._config.sample_sigma,
             mean_init=None,  # will be init at zeros in cmaes
             bias_weights=True,
             delay_eigen_decomposition=True,
@@ -225,13 +238,13 @@ class MonoCMAESEmitter(VanillaESEmitter):
             ),
             random_key,
         )
-    
+
     @partial(
         jax.jit,
         static_argnames=("self"),
     )
     def _inject_actor(
-        self, 
+        self,
         genomes: Genotype,
         actor: Genotype,
         invsqrt_cov: jnp.ndarray,
@@ -272,7 +285,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
 
         # Replace the n last one, with n = self._config.nb_injections
         networks = jax.tree_util.tree_map(
-            lambda x, y: jnp.concatenate([x[:-self._config.nb_injections], y], axis=0),
+            lambda x, y: jnp.concatenate([x[: -self._config.nb_injections], y], axis=0),
             networks,
             actor,
         )
@@ -280,12 +293,11 @@ class MonoCMAESEmitter(VanillaESEmitter):
         # print("After injection", jax.tree_map(lambda x: x.shape, networks))
 
         # Replace the n last one, with n = self._config.nb_injections
-        genomes = genomes.at[-self._config.nb_injections:].set(normed_x_actor)
+        genomes = genomes.at[-self._config.nb_injections :].set(normed_x_actor)
         # print("After injection", genomes.shape)
 
         return genomes, networks, norm
 
-    
     @partial(
         jax.jit,
         static_argnames=("self",),
@@ -311,15 +323,11 @@ class MonoCMAESEmitter(VanillaESEmitter):
         offspring_genome = emitter_state.optimizer_state.mean
         offspring = self.unflatten(offspring_genome)
 
-        offspring = jax.tree_map(
-            lambda x: jnp.expand_dims(x, axis=0), 
-            offspring
-        )
+        offspring = jax.tree_map(lambda x: jnp.expand_dims(x, axis=0), offspring)
 
         # print("Init offspring", jax.tree_map(lambda x: x.shape, offspring))
 
         return offspring, random_key
-    
 
     # @partial(
     #     jax.jit,
@@ -332,8 +340,8 @@ class MonoCMAESEmitter(VanillaESEmitter):
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
         fitness_function: Callable[[Genotype], RNGKey],
-        surrogate_data = None,
-        actor: Genotype=None,
+        surrogate_data=None,
+        actor: Genotype = None,
     ) -> Tuple[Genotype, CMAESState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
         the fitnesses and descriptors fo its es-samples, return its
@@ -358,16 +366,16 @@ class MonoCMAESEmitter(VanillaESEmitter):
         # print("parent_genome", parent_genome.shape)
 
         genomes = jax.random.multivariate_normal(
-                key=subkey,
-                shape=(self._config.sample_number,),
-                mean=parent_genome,
-                # Idendity matrix
-                # cov=jnp.eye(parent_genome.shape[0])
-                cov=(optimizer_state.sigma**2) * optimizer_state.cov_matrix
+            key=subkey,
+            shape=(self._config.sample_number,),
+            mean=parent_genome,
+            # Idendity matrix
+            # cov=jnp.eye(parent_genome.shape[0])
+            cov=(optimizer_state.sigma**2) * optimizer_state.cov_matrix,
         )
 
         # print("genomes", genomes.shape)
-        
+
         # Turn each sample into a network
         # networks = jax.vmap(self.unflatten)(genomes)
         invsqrt_cov = optimizer_state.invsqrt_cov
@@ -377,11 +385,11 @@ class MonoCMAESEmitter(VanillaESEmitter):
             invsqrt_cov,
             center=parent_genome,
             sigma=optimizer_state.sigma,
-            )
-        
+        )
+
         # print("Population", jax.tree_map(lambda x: x.shape, networks))
         # print("networks", networks.shape)
-        
+
         # Evaluating genomes
         fitnesses, descriptors, extra_scores, random_key = fitness_function(
             networks, random_key, surrogate_data
@@ -407,15 +415,12 @@ class MonoCMAESEmitter(VanillaESEmitter):
         #     )
         # extra_scores["canonical_update"] = (parent, canonical_update)
 
-
         # Sort genomes by scores (descending order)
         idx_sorted = jnp.argsort(-scores)
 
         sorted_candidates = genomes[idx_sorted[: self._cmaes._num_best]]
 
-        new_cmaes_state = self._cmaes.update_state(
-            optimizer_state, 
-            sorted_candidates)
+        new_cmaes_state = self._cmaes.update_state(optimizer_state, sorted_candidates)
 
         new_eigen = new_cmaes_state.eigenvalues
         # Norm of the eigenvalues change
@@ -429,11 +434,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
 
         # print("Offspring", jax.tree_map(lambda x: x.shape, offspring))
 
-
-        offspring = jax.tree_map(
-            lambda x: jnp.expand_dims(x, axis=0), 
-            offspring
-        )
+        offspring = jax.tree_map(lambda x: jnp.expand_dims(x, axis=0), offspring)
 
         # print("Expanded", jax.tree_map(lambda x: x.shape, offspring))
         return offspring, new_cmaes_state, random_key, extra_scores
@@ -442,7 +443,7 @@ class MonoCMAESEmitter(VanillaESEmitter):
     #     jax.jit,
     #     static_argnames=("self"),
     # )
-    # def _canonical_update(self, 
+    # def _canonical_update(self,
     #     parent: Genotype,
     #     genotypes: Genotype,
     #     fitnesses: Fitness,
@@ -454,13 +455,13 @@ class MonoCMAESEmitter(VanillaESEmitter):
 
     #     # print("Canonical update simulation")
 
-    #     ranking_indices = jnp.argsort(fitnesses, axis=0) 
-    #     ranks = jnp.argsort(ranking_indices, axis=0) 
+    #     ranking_indices = jnp.argsort(fitnesses, axis=0)
+    #     ranks = jnp.argsort(ranking_indices, axis=0)
     #     ranks = self._config.sample_number - ranks # Inverting the ranks
-        
+
     #     mu = self._cmaes._num_best # Number of parents
 
-    #     weights = jnp.where(ranks <= mu, jnp.log(mu+0.5) - jnp.log(ranks), 0) 
+    #     weights = jnp.where(ranks <= mu, jnp.log(mu+0.5) - jnp.log(ranks), 0)
     #     weights /= jnp.sum(weights) # Normalizing the weights
 
     #     # Get noise from population and parent
@@ -508,15 +509,14 @@ class MonoCMAESEmitter(VanillaESEmitter):
         static_argnames=("self",),
     )
     def get_metrics(
-            self, 
-            emitter_state: VanillaESEmitterState,
-            offspring: Genotype,
-            extra_scores: ExtraScores,
-            fitnesses: Fitness,
-            random_key: RNGKey,
-            new_evaluations: int = 0,
-        ) -> ESMetrics:
-
+        self,
+        emitter_state: VanillaESEmitterState,
+        offspring: Genotype,
+        extra_scores: ExtraScores,
+        fitnesses: Fitness,
+        random_key: RNGKey,
+        new_evaluations: int = 0,
+    ) -> ESMetrics:
         # Super
         metrics = super().get_metrics(
             emitter_state=emitter_state,
@@ -534,12 +534,12 @@ class MonoCMAESEmitter(VanillaESEmitter):
         if "eigen_change" in extra_scores:
             # print(type(metrics))
             metrics = metrics.replace(
-                eigen_change = extra_scores["eigen_change"],
+                eigen_change=extra_scores["eigen_change"],
             )
-        
+
         if "injection_norm" in extra_scores:
             metrics = metrics.replace(
-                injection_norm = extra_scores["injection_norm"],
+                injection_norm=extra_scores["injection_norm"],
             )
 
         if "canonical_update" in extra_scores:
@@ -551,23 +551,23 @@ class MonoCMAESEmitter(VanillaESEmitter):
             )
 
             metrics = metrics.replace(
-                cma_canonical_cosine = angles["cosine_similarity"],
-                cma_canonical_sign = angles["same_sign"],
+                cma_canonical_cosine=angles["cosine_similarity"],
+                cma_canonical_sign=angles["same_sign"],
                 # cma_norm = angles["v1_norm"],
-                canonical_step_norm = angles["v2_norm"]
+                canonical_step_norm=angles["v2_norm"],
             )
         return metrics
-            
 
     @partial(
         jax.jit,
         static_argnames=("self",),
     )
-    def compute_angles(self, 
+    def compute_angles(
+        self,
         g1: Genotype,
         g2: Genotype,
         center: Genotype,
-    ) -> float:  
+    ) -> float:
         """Compute the cosine similarity between two vectors."""
         g1 = self.flatten(g1)
         g2 = self.flatten(g2)

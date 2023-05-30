@@ -44,6 +44,7 @@ class NoESConfig(VanillaESConfig):
     nses_emitter: bool = False
     sample_number: int = 1000
     novelty_nearest_neighbors: int = 10
+    explo_noise: float = 0.0
 
 
 class NoESEmitterState(VanillaESEmitterState):
@@ -70,7 +71,10 @@ class NoESEmitter(VanillaESEmitter):
     def __init__(
         self,
         config: NoESConfig,
-        scoring_fn: Callable[
+        rollout_fn: Callable[
+            [Genotype, RNGKey], Tuple[Fitness, Descriptor, ExtraScores, RNGKey]
+        ],
+        eval_fn: Callable[
             [Genotype, RNGKey], Tuple[Fitness, Descriptor, ExtraScores, RNGKey]
         ],
         total_generations: int = 1,
@@ -88,12 +92,13 @@ class NoESEmitter(VanillaESEmitter):
                 the empty novelty archive.
         """
         self._config = config
-        self._scoring_fn = scoring_fn
+        self._eval_fn = eval_fn
+        self._rollout_fn = rollout_fn
         self._total_generations = total_generations
         self._num_descriptors = num_descriptors
 
         # Add a wrapper to the scoring function to handle the surrogate data
-        extended_scoring = lambda networks, random_key, extra: self._scoring_fn(
+        extended_scoring = lambda networks, random_key, extra: self._rollout_fn(
             networks, random_key
         )
 
@@ -115,6 +120,8 @@ class NoESEmitter(VanillaESEmitter):
     def config_string(self):
         """Returns a string describing the config."""
         s = f"MultiRL {self._config.sample_number} "
+        if self._config.explo_noise > 0:
+            s += f"| explo {self._config.explo_noise} "
         return s
 
     def init(

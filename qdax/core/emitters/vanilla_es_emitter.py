@@ -23,10 +23,10 @@ from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 
 
 def flatten_genotype(genotype: Genotype) -> jnp.ndarray:
-        flat_variables, _ = tree_flatten(genotype)
-        # print("Flatten", flat_variables)
-        vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
-        return vect
+    flat_variables, _ = tree_flatten(genotype)
+    # print("Flatten", flat_variables)
+    vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
+    return vect
 
 
 class NoveltyArchive(flax.struct.PyTreeNode):
@@ -143,6 +143,7 @@ class VanillaESConfig:
     actor_injection: bool = False
     nb_injections: int = 1
     injection_clipping = False
+    explo_noise: float = 0.0
 
 
 class VanillaESEmitterState(EmitterState):
@@ -170,7 +171,6 @@ class VanillaESEmitterState(EmitterState):
         jnp.save(path + "_offspring.npy", flat_genotypes)
         print("Saved offspring to", path + "_offspring.npy")
 
-        
 
 class VanillaESEmitter(Emitter):
     """
@@ -183,7 +183,10 @@ class VanillaESEmitter(Emitter):
     def __init__(
         self,
         config: VanillaESConfig,
-        scoring_fn: Callable[
+        rollout_fn: Callable[
+            [Genotype, RNGKey], Tuple[Fitness, Descriptor, ExtraScores, RNGKey]
+        ],
+        eval_fn: Callable[
             [Genotype, RNGKey], Tuple[Fitness, Descriptor, ExtraScores, RNGKey]
         ],
         total_generations: int = 1,
@@ -201,7 +204,8 @@ class VanillaESEmitter(Emitter):
                 the empty novelty archive.
         """
         self._config = config
-        self._scoring_fn = scoring_fn
+        self._eval_fn = eval_fn
+        self._rollout_fn = rollout_fn
         self._total_generations = total_generations
         self._num_descriptors = num_descriptors
 
@@ -218,11 +222,12 @@ class VanillaESEmitter(Emitter):
             self._actor_injection = lambda x, a, p: x
 
         # Add a wrapper to the scoring function to handle the surrogate data
-        extended_scoring = lambda networks, random_key, extra: self._scoring_fn(
-            networks, random_key)
+        extended_scoring = lambda networks, random_key, extra: self._rollout_fn(
+            networks, random_key
+        )
 
         self._es_emitter = partial(
-            self._base_es_emitter, 
+            self._base_es_emitter,
             fitness_function=extended_scoring,
             surrogate_data=None,
         )
@@ -315,7 +320,7 @@ class VanillaESEmitter(Emitter):
             ),
             random_key,
         )
-    
+
     @partial(
         jax.jit,
         static_argnames=("self",),
@@ -325,7 +330,6 @@ class VanillaESEmitter(Emitter):
         # print("Flatten", flat_variables)
         vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
         return vect
-    
 
     @partial(
         jax.jit,
@@ -371,7 +375,7 @@ class VanillaESEmitter(Emitter):
         static_argnames=("self"),
     )
     def _sample(
-        self, 
+        self,
         parent: Genotype,
         # total_sample_number: int,
         random_key: RNGKey,
@@ -398,13 +402,13 @@ class VanillaESEmitter(Emitter):
         )
 
         return sample_noise, random_key
-    
+
     @partial(
         jax.jit,
         static_argnames=("self"),
     )
     def _sample_cauchy(
-        self, 
+        self,
         parent: Genotype,
         # total_sample_number: int,
         random_key: RNGKey,
@@ -431,13 +435,13 @@ class VanillaESEmitter(Emitter):
         )
 
         return sample_noise, random_key
-    
+
     @partial(
         jax.jit,
         static_argnames=("self"),
     )
     def _sample_mirror(
-        self, 
+        self,
         parent: Genotype,
         # total_sample_number: int,
         random_key: RNGKey,
@@ -449,7 +453,7 @@ class VanillaESEmitter(Emitter):
             parent: the considered parent.
             number: the number of genotypes to sample.
             random_key
-        
+
         Returns:
             The sampled noises and a new random_key.
         """
@@ -472,13 +476,13 @@ class VanillaESEmitter(Emitter):
         )
 
         return sample_noise, random_key
-    
+
     @partial(
         jax.jit,
         static_argnames=("self"),
     )
     def _inject_actor(
-        self, 
+        self,
         sample_noise: Genotype,
         actor: Genotype,
         parent: Genotype,
@@ -489,12 +493,12 @@ class VanillaESEmitter(Emitter):
         raise NotImplementedError
         # Get the noise that recreates the actor
         actor_noise = jax.tree_util.tree_map(
-            lambda x, y: (x - y)/self._config.sample_sigma,
+            lambda x, y: (x - y) / self._config.sample_sigma,
             actor,
             parent,
         )
 
-        # Replace the last one 
+        # Replace the last one
         sample_noise = jax.tree_util.tree_map(
             lambda x, y: jnp.concatenate([x[:-1], y], axis=0),
             sample_noise,
@@ -503,7 +507,6 @@ class VanillaESEmitter(Emitter):
 
         return sample_noise
 
-
     def _base_es_emitter(
         self,
         parent: Genotype,
@@ -511,8 +514,8 @@ class VanillaESEmitter(Emitter):
         random_key: RNGKey,
         scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
         fitness_function: Callable[[Genotype], RNGKey],
-        surrogate_data = None,
-        actor: Genotype=None,
+        surrogate_data=None,
+        actor: Genotype = None,
     ) -> Tuple[Genotype, optax.OptState, RNGKey]:
         """Main es component, given a parent and a way to infer the score from
         the fitnesses and descriptors fo its es-samples, return its
@@ -530,7 +533,7 @@ class VanillaESEmitter(Emitter):
 
         raise NotImplementedError
 
-        return offspring, optimizer_state, random_key, extra_scores
+        # return offspring, optimizer_state, random_key, extra_scores
 
     @partial(
         jax.jit,
@@ -586,7 +589,7 @@ class VanillaESEmitter(Emitter):
             random_key=emitter_state.random_key,
             scores_fn=scores,
             # actor=genotypes,
-            # fitness_function=self._scoring_fn,
+            # fitness_function=self._eval_fn,
         )
 
         metrics = self.get_metrics(
@@ -597,7 +600,6 @@ class VanillaESEmitter(Emitter):
             random_key=random_key,
             new_evaluations=self._config.sample_number,
         )
-
 
         return emitter_state.replace(  # type: ignore
             optimizer_state=optimizer_state,
@@ -613,15 +615,14 @@ class VanillaESEmitter(Emitter):
         static_argnames=("self",),
     )
     def get_metrics(
-            self, 
-            emitter_state: VanillaESEmitterState,
-            offspring: Genotype,
-            extra_scores: ExtraScores,
-            fitnesses: Fitness,
-            random_key: RNGKey,
-            new_evaluations: int = 0,
-        ) -> ESMetrics:
-
+        self,
+        emitter_state: VanillaESEmitterState,
+        offspring: Genotype,
+        extra_scores: ExtraScores,
+        fitnesses: Fitness,
+        random_key: RNGKey,
+        new_evaluations: int = 0,
+    ) -> ESMetrics:
         metrics = emitter_state.metrics
 
         # Log fitness from the center
@@ -638,7 +639,7 @@ class VanillaESEmitter(Emitter):
             pop_median = jnp.median(extra_scores["population_fitness"])
             pop_std = jnp.std(extra_scores["population_fitness"])
             pop_min = jnp.min(extra_scores["population_fitness"])
-            pop_max = jnp.max(extra_scores["population_fitness"]) 
+            pop_max = jnp.max(extra_scores["population_fitness"])
             metrics = metrics.replace(
                 pop_mean=pop_mean,
                 pop_median=pop_median,
@@ -649,19 +650,17 @@ class VanillaESEmitter(Emitter):
 
         if "injection_norm" in extra_scores:
             metrics = metrics.replace(
-                injection_norm = extra_scores["injection_norm"],
+                injection_norm=extra_scores["injection_norm"],
             )
-        
+
         # Evaluating offspring multiple time
         multi_offspring = jax.tree_util.tree_map(
             lambda x: jnp.repeat(x, self._config.sample_number, axis=0),
             offspring,
         )
 
-        off_fitnesses, _, _, random_key = self._scoring_fn(
-            multi_offspring, random_key
-        )
-         
+        off_fitnesses, _, _, random_key = self._eval_fn(multi_offspring, random_key)
+
         metrics = metrics.replace(
             center_mean=jnp.mean(off_fitnesses),
             center_median=jnp.median(off_fitnesses),
@@ -669,5 +668,5 @@ class VanillaESEmitter(Emitter):
             center_min=jnp.min(off_fitnesses),
             center_max=jnp.max(off_fitnesses),
         )
-        
+
         return metrics

@@ -39,6 +39,14 @@ parser.add_argument(
     "--deterministic", default=False, action="store_true", help="Fixed init state"
 )
 
+# Exploration noise, default 0
+parser.add_argument(
+    "--explo_noise",
+    type=float,
+    default=0.0,
+    help="Exploration noise (Gaussian)",
+)
+
 # Map-Elites
 parser.add_argument(
     "--num_init_cvt_samples",
@@ -314,7 +322,12 @@ from qdax.core.rl_es_parts.open_es import OpenESEmitter, OpenESConfig
 from qdax.core.rl_es_parts.canonical_es import CanonicalESConfig, CanonicalESEmitter
 from qdax.core.rl_es_parts.random_search import RandomConfig, RandomEmitter
 from qdax.core.rl_es_parts.mono_cmaes import MonoCMAESEmitter, MonoCMAESConfig
-from qdax.core.rl_es_parts.es_utils import ES, default_es_metrics, ESMetrics
+from qdax.core.rl_es_parts.es_utils import (
+    ES,
+    default_es_metrics,
+    ESMetrics,
+    make_stochastic_policy_network_play_step_fn_brax,
+)
 
 from qdax.core.emitters.multi_actor_td3 import NoESConfig, NoESEmitter, MultiActorTD3
 
@@ -371,13 +384,35 @@ play_reset_fn = env.reset
 
 # Prepare the scoring function
 bd_extraction_fn = environments.behavior_descriptor_extractor[args.env_name]
-scoring_fn = functools.partial(
+
+play_step_fn = make_policy_network_play_step_fn_brax(env, policy_network)
+
+eval_scoring_fn = functools.partial(
     reset_based_scoring_function_brax_envs,
     episode_length=args.episode_length,
     play_reset_fn=play_reset_fn,
-    play_step_fn=make_policy_network_play_step_fn_brax(env, policy_network),
+    play_step_fn=play_step_fn,
     behavior_descriptor_extractor=bd_extraction_fn,
 )
+
+if args.explo_noise > 0:
+    play_step_fn = make_stochastic_policy_network_play_step_fn_brax(
+        env,
+        policy_network,
+        args.explo_noise,
+    )
+    print(f"Using exploration noise {args.explo_noise} in rollouts")
+
+    rollout_scoring_fn = functools.partial(
+        reset_based_scoring_function_brax_envs,
+        episode_length=args.episode_length,
+        play_reset_fn=play_reset_fn,
+        play_step_fn=play_step_fn,
+        behavior_descriptor_extractor=bd_extraction_fn,
+    )
+
+else:
+    rollout_scoring_fn = eval_scoring_fn
 
 # Get minimum reward value to make sure qd_score are positive
 reward_offset = environments.reward_offset[args.env_name]
@@ -406,11 +441,13 @@ if args.es in ["open", "openai"]:
         actor_injection=args.actor_injection,
         nb_injections=args.nb_injections,
         episode_length=args.episode_length,
+        explo_noise=args.explo_noise,
     )
 
     es_emitter = OpenESEmitter(
         config=es_config,
-        scoring_fn=scoring_fn,
+        rollout_fn=rollout_scoring_fn,
+        eval_fn=eval_scoring_fn,
         total_generations=args.num_gens,
         num_descriptors=env.behavior_descriptor_length,
     )
@@ -426,11 +463,13 @@ elif args.es in ["canonical"]:
         nb_injections=args.nb_injections,
         episode_length=args.episode_length,
         injection_clipping=args.injection_clip,
+        explo_noise=args.explo_noise,
     )
 
     es_emitter = CanonicalESEmitter(
         config=es_config,
-        scoring_fn=scoring_fn,
+        rollout_fn=rollout_scoring_fn,
+        eval_fn=eval_scoring_fn,
         total_generations=args.num_gens,
         num_descriptors=env.behavior_descriptor_length,
     )
@@ -443,11 +482,13 @@ elif args.es in ["cmaes"]:
         actor_injection=args.actor_injection,
         nb_injections=args.nb_injections,
         episode_length=args.episode_length,
+        explo_noise=args.explo_noise,
     )
 
     es_emitter = MonoCMAESEmitter(
         config=es_config,
-        scoring_fn=scoring_fn,
+        rollout_fn=rollout_scoring_fn,
+        eval_fn=eval_scoring_fn,
         total_generations=args.num_gens,
         num_descriptors=env.behavior_descriptor_length,
     )
@@ -459,11 +500,13 @@ elif args.es in ["random"]:
         actor_injection=args.actor_injection,
         nb_injections=args.nb_injections,
         episode_length=args.episode_length,
+        explo_noise=args.explo_noise,
     )
 
     es_emitter = RandomEmitter(
         config=es_config,
-        scoring_fn=scoring_fn,
+        rollout_fn=rollout_scoring_fn,
+        eval_fn=eval_scoring_fn,
         total_generations=args.num_gens,
         num_descriptors=env.behavior_descriptor_length,
     )
@@ -474,11 +517,13 @@ elif args.es in ["multiactor"]:
         sample_number=args.pop,
         novelty_nearest_neighbors=args.novelty_nearest_neighbors,
         episode_length=args.episode_length,
+        explo_noise=args.explo_noise,
     )
 
     es_emitter = NoESEmitter(
         config=es_config,
-        scoring_fn=scoring_fn,
+        rollout_fn=rollout_scoring_fn,
+        eval_fn=eval_scoring_fn,
         total_generations=args.num_gens,
         num_descriptors=env.behavior_descriptor_length,
     )
@@ -561,7 +606,7 @@ else:
 
 # Instantiate ES
 es = ES(
-    scoring_function=scoring_fn,
+    scoring_function=eval_scoring_fn,
     emitter=emitter,
     metrics_function=metrics_function,
 )

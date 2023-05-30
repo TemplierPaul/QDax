@@ -77,7 +77,10 @@ class CanonicalESEmitter(VanillaESEmitter):
     def __init__(
         self,
         config: VanillaESConfig,
-        scoring_fn: Callable[
+        rollout_fn: Callable[
+            [Genotype, RNGKey], Tuple[Fitness, Descriptor, ExtraScores, RNGKey]
+        ],
+        eval_fn: Callable[
             [Genotype, RNGKey], Tuple[Fitness, Descriptor, ExtraScores, RNGKey]
         ],
         total_generations: int = 1,
@@ -95,9 +98,15 @@ class CanonicalESEmitter(VanillaESEmitter):
                 the empty novelty archive.
         """
         self._config = config
-        self._scoring_fn = scoring_fn
+        self._eval_fn = eval_fn
+        self._rollout_fn = rollout_fn
         self._total_generations = total_generations
         self._num_descriptors = num_descriptors
+
+        if self._config.explo_noise > 0:
+            assert (
+                self._eval_fn != self._rollout_fn
+            ), "Exploration noise requires 2 different rollout functions"
 
         # Actor injection
         if self._config.actor_injection:
@@ -125,7 +134,7 @@ class CanonicalESEmitter(VanillaESEmitter):
             self._actor_injection = no_injection
 
         # Add a wrapper to the scoring function to handle the surrogate data
-        extended_scoring = lambda networks, random_key, extra: self._scoring_fn(
+        extended_scoring = lambda networks, random_key, extra: self._rollout_fn(
             networks, random_key
         )
 
@@ -150,12 +159,14 @@ class CanonicalESEmitter(VanillaESEmitter):
         """Returns a string describing the config."""
         s = f"Canonical {self._config.sample_number} "
         s += f"- \u03C3 {self._config.sample_sigma} "
+        if self._config.explo_noise > 0:
+            s += f"| explo {self._config.explo_noise} "
         # learning rate
         # s += f"- lr {self._config.learning_rate} "
         if self._config.actor_injection:
-            s += f"| AI {self._config.nb_injections}"
+            s += f"| AI {self._config.nb_injections} "
             if self._config.injection_clipping:
-                s += " (clip)"
+                s += "(clip) "
         return s
 
     # @partial(
@@ -459,7 +470,6 @@ class CanonicalESEmitter(VanillaESEmitter):
             random_key=emitter_state.random_key,
             scores_fn=scores,
             optimizer_state=emitter_state.optimizer_state,
-            # fitness_function=self._scoring_fn,
         )
 
         metrics = self.get_metrics(

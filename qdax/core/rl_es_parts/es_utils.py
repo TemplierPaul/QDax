@@ -4,13 +4,34 @@ import jax
 import jax.numpy as jnp
 from functools import partial
 from brax.io import html
+import flax.linen as nn
 
-from qdax.types import Centroid, Descriptor, ExtraScores, Fitness, Genotype, RNGKey, Metrics
+import brax
+
+from qdax.types import (
+    Centroid,
+    Descriptor,
+    ExtraScores,
+    Fitness,
+    Genotype,
+    RNGKey,
+    Metrics,
+)
 
 # from qdax.core.containers.mapelites_repertoire import compute_cvt_centroids
 # from qdax.core.emitters.vanilla_es_emitter import VanillaESConfig, VanillaESEmitter
 from qdax.core.map_elites import MAPElites
-from qdax.core.containers.mapelites_repertoire import MapElitesRepertoire, get_cells_indices
+from qdax.core.containers.mapelites_repertoire import (
+    MapElitesRepertoire,
+    get_cells_indices,
+)
+
+from qdax.core.neuroevolution.buffers.buffer import (
+    QDTransition,
+    ReplayBuffer,
+    Transition,
+)
+
 # from qdax.utils.metrics import CSVLogger, default_qd_metrics
 from qdax.core.emitters.emitter import Emitter, EmitterState
 
@@ -18,12 +39,28 @@ from dataclasses import dataclass, asdict
 import flax
 from flax.struct import dataclass as fdataclass
 
+from qdax.types import (
+    Action,
+    Descriptor,
+    Mask,
+    Metrics,
+    Observation,
+    Params,
+    Reward,
+    RNGKey,
+)
+
+from brax.envs import Env
+from brax.envs import State as EnvState
+from jax import numpy as jnp
+
+
 @fdataclass
 class ESMetrics:
-    es_updates: int=0
-    surrogate_updates: int=0
-    rl_updates: int=0
-    evaluations: int=0
+    es_updates: int = 0
+    surrogate_updates: int = 0
+    rl_updates: int = 0
+    evaluations: int = 0
     actor_fitness: Fitness = -jnp.inf
     center_fitness: Fitness = -jnp.inf
     # fitness: Fitness = -jnp.inf
@@ -67,7 +104,7 @@ class ESMetrics:
     # Spearman correlation between surrogate and true fitness
     spearmans_correlation: float = -jnp.inf
     spearmans_pvalue: float = -jnp.inf
-    
+
     ## Canonical in CMAES
     canonical_step_norm: float = -jnp.inf
     # CMAES - Canonical metrics
@@ -76,13 +113,13 @@ class ESMetrics:
     # RL - Canonical metrics
     canonical_rl_cosine: float = -jnp.inf
     canonical_rl_sign: float = -jnp.inf
-    
+
     # Spearman-based surrogate ES
     spearman_omega: float = -jnp.inf
 
+
 class ESRepertoire(MapElitesRepertoire):
-    """ A MapElitesRepertoire for ES that keeps the fitness of the last added ES center for logging
-    """
+    """A MapElitesRepertoire for ES that keeps the fitness of the last added ES center for logging"""
 
     @classmethod
     def init_default(
@@ -210,14 +247,10 @@ class ESRepertoire(MapElitesRepertoire):
         )
 
     def record_video(self, env, policy_network):
-        """Record a video of the best individual in the repertoire.
-        """
+        """Record a video of the best individual in the repertoire."""
         best_idx = jnp.argmax(self.fitnesses)
 
-        elite = jax.tree_util.tree_map(
-            lambda x: x[best_idx],
-            self.genotypes
-        )
+        elite = jax.tree_util.tree_map(lambda x: x[best_idx], self.genotypes)
 
         jit_env_reset = jax.jit(env.reset)
         jit_env_step = jax.jit(env.step)
@@ -233,10 +266,9 @@ class ESRepertoire(MapElitesRepertoire):
 
         return html.render(env.sys, [s.qp for s in rollout[:500]])
 
-    
+
 class ES(MAPElites):
-    """ Map-Elite structure to run a standalone ES
-    """
+    """Map-Elite structure to run a standalone ES"""
 
     # @partial(jax.jit, static_argnames=("self",))
     def init(
@@ -294,7 +326,7 @@ class ES(MAPElites):
         # print("After ES init state_update", emitter_state.rl_state.replay_buffer.current_position)
 
         return repertoire, emitter_state, random_key
-    
+
     @partial(jax.jit, static_argnames=("self",))
     def update(
         self,
@@ -348,7 +380,10 @@ class ES(MAPElites):
 
         return repertoire, emitter_state, metrics, random_key
 
-def default_es_metrics(repertoire: ESRepertoire, emitter_state: EmitterState, qd_offset: float) -> Metrics:
+
+def default_es_metrics(
+    repertoire: ESRepertoire, emitter_state: EmitterState, qd_offset: float
+) -> Metrics:
     """Compute the usual QD metrics that one can retrieve
     from a MAP Elites repertoire.
 
@@ -381,3 +416,73 @@ def default_es_metrics(repertoire: ESRepertoire, emitter_state: EmitterState, qd
     # Merge
     metrics.update(archive_metrics)
     return metrics
+
+
+def make_stochastic_policy_network_play_step_fn_brax(
+    env: brax.envs.Env,
+    policy_network: nn.Module,
+    expl_noise: float,
+) -> Callable[
+    [EnvState, Params, RNGKey], Tuple[EnvState, Params, RNGKey, QDTransition]
+]:
+    """
+    Creates a function that when called, plays a step of the environment.
+
+    Args:
+        env: The BRAX environment.
+        policy_network:  The policy network structure used for creating and evaluating
+            policy controllers.
+
+    Returns:
+        stochastic_play_step_fn: A function that plays a step of the environment with a
+        noisy action.
+    """
+
+    # Define the function to play a step with the policy in the environment
+    def stochastic_play_step_fn(
+        env_state: EnvState,
+        policy_params: Params,
+        random_key: RNGKey,
+    ) -> Tuple[EnvState, Params, RNGKey, QDTransition]:
+        """
+        Play an environment step and return the updated EnvState and the transition.
+
+        Args: env_state: The state of the environment (containing for instance the
+        actor joint positions and velocities, the reward...). policy_params: The
+        parameters of policies/controllers. random_key: JAX random key.
+
+        Returns:
+            next_state: The updated environment state.
+            policy_params: The parameters of policies/controllers (unchanged).
+            random_key: The updated random key.
+            transition: containing some information about the transition: observation,
+                reward, next observation, policy action...
+        """
+
+        actions = policy_network.apply(policy_params, env_state.obs)
+
+        # Add noise to the actions for exploration
+        random_key, subkey = jax.random.split(random_key)
+        noise = jax.random.normal(subkey, actions.shape) * expl_noise
+        actions = actions + noise
+        actions = jnp.clip(actions, -1.0, 1.0)
+        # print(f"Noise {noise}")
+
+        state_desc = env_state.info["state_descriptor"]
+        next_state = env.step(env_state, actions)
+
+        transition = QDTransition(
+            obs=env_state.obs,
+            next_obs=next_state.obs,
+            rewards=next_state.reward,
+            dones=next_state.done,
+            actions=actions,
+            truncations=next_state.info["truncation"],
+            state_desc=state_desc,
+            next_state_desc=next_state.info["state_descriptor"],
+        )
+
+        return next_state, policy_params, random_key, transition
+
+    # print("stochastic_play_step_fn", stochastic_play_step_fn)
+    return stochastic_play_step_fn
