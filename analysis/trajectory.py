@@ -2,7 +2,7 @@ import argparse
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-from qdax.core.rl_es_parts.es_setup import setup_es
+from qdax.core.rl_es_parts.es_setup import setup_es, fill_default
 import glob
 import re
 from matplotlib.animation import FuncAnimation, PillowWriter
@@ -14,17 +14,21 @@ FIT_NORM = {
     "walker2d_uni": (0, 4000),
 }
 
+
 def net_shape(net):
     return jax.tree_map(lambda x: x.shape, net)
 
-def multi_eval(nets, scoring_fn, n_eval):
-    fitnesses = []
-    key = jax.random.PRNGKey(0)
-    from tqdm import tqdm
-    for g in tqdm(range(n_eval)):
-        f, _, _, _ = scoring_fn(nets, key)
-        fitnesses.append(f)
-    return jnp.array(fitnesses).mean(axis=0)
+
+# def multi_eval(nets, scoring_fn, n_eval):
+#     fitnesses = []
+#     key = jax.random.PRNGKey(0)
+#     from tqdm import tqdm
+
+#     for g in tqdm(range(n_eval)):
+#         f, _, _, _ = scoring_fn(nets, key)
+#         fitnesses.append(f)
+#     return jnp.array(fitnesses).mean(axis=0)
+
 
 class Path:
     def __init__(self, file_regex, name=None):
@@ -35,7 +39,7 @@ class Path:
         self.genomes = {}
         self.gens = []
         for f in self.files:
-            gen = int(re.findall(r'\d+', f.split("/")[-1])[-1])
+            gen = int(re.findall(r"\d+", f.split("/")[-1])[-1])
             self.genomes[gen] = {"genome": jnp.load(f)}
             self.gens.append(gen)
         self.gens.sort()
@@ -47,7 +51,7 @@ class Path:
 
     def __str__(self):
         return self.__repr__()
-    
+
     def copy(self):
         new_path = Path(self.file_regex, self.name)
         return new_path
@@ -66,15 +70,14 @@ class Path:
         ax.plot(self.projected[:, 0], self.projected[:, 1], label=self.name, c=c)
         ax.scatter(self.projected[-1, 0], self.projected[-1, 1], marker="x", c=c)
 
-    def evaluate(self, unflatten_fn, scoring_fn):
+    def evaluate(self, unflatten_fn, scoring_fn, key):
         genomes = self.export_genomes()
         nets = unflatten_fn(genomes)
-        key = jax.random.PRNGKey(0)
+        # key = jax.random.PRNGKey(0)
         self.fitnesses, descriptors, extra_scores, random_key = scoring_fn(nets, key)
         return self.fitnesses
 
 
-
 from sklearn.decomposition import PCA
 import plotly.graph_objs as go
 import numpy as np
@@ -84,6 +87,7 @@ from sklearn.decomposition import PCA
 import plotly.graph_objs as go
 import numpy as np
 import plotly.offline as pyo
+
 
 class PathPCA:
     def __init__(self, paths, start_gen=0, end_gen=None, pca_dim=2):
@@ -99,7 +103,12 @@ class PathPCA:
 
         proj = [p.transform(self.pca) for p in paths]
         proj = jnp.concatenate(proj)
-        self.dim = (proj[:, 0].min(), proj[:, 0].max(), proj[:, 1].min(), proj[:, 1].max())
+        self.dim = (
+            proj[:, 0].min(),
+            proj[:, 0].max(),
+            proj[:, 1].min(),
+            proj[:, 1].max(),
+        )
 
         self.samples = None
         self.genomes = None
@@ -107,13 +116,13 @@ class PathPCA:
 
     def __repr__(self):
         return f"PCA of {' - '.join([p.name for p in self.paths])}"
-    
+
     def __str__(self):
         return self.__repr__()
 
     def sample_grid(self, n_points=10, dx=0.1):
         # Interpolate as grid
-        x_range = jnp.abs(self.dim[1] - self.dim[0]) 
+        x_range = jnp.abs(self.dim[1] - self.dim[0])
         x_margin = x_range * dx
         y_range = jnp.abs(self.dim[3] - self.dim[2])
         y_margin = y_range * dx
@@ -131,16 +140,16 @@ class PathPCA:
         self.genomes = self.pca.inverse_transform(self.samples)
         return self.genomes
 
-    def fitness_grid(self, unflatten_fn, scoring_fn):
+    def fitness_grid(self, unflatten_fn, scoring_fn, key):
         if self.samples is None:
             raise ValueError("No samples computed")
         # print(self.genomes.shape)
         nets = unflatten_fn(self.genomes)
-        key = jax.random.PRNGKey(0)
+        # key = jax.random.PRNGKey(0)
         self.true_fit, descriptors, extra_scores, random_key = scoring_fn(nets, key)
         # Compute fitness for each path
         for p in self.paths:
-            p.evaluate(unflatten_fn, scoring_fn)
+            p.evaluate(unflatten_fn, scoring_fn, key)
         return self.true_fit
 
     def plot(self, save=None):
@@ -180,17 +189,13 @@ class PathPCA:
             y_size = y_grid.max() - y_grid.min()
             x_size = float(x_size)
             y_size = float(y_size)
-            
+
             y_size = y_size / x_size
             x_size = 1.0
 
             # Create a 3D surface plot
-            fig = go.Figure(data=[go.Surface(
-                x=x_grid,
-                y=y_grid,
-                z=z_grid,
-                colorscale='Viridis'
-            )],
+            fig = go.Figure(
+                data=[go.Surface(x=x_grid, y=y_grid, z=z_grid, colorscale="Viridis")],
             )
 
             # Plot paths
@@ -202,7 +207,7 @@ class PathPCA:
                     x=x,
                     y=y,
                     z=z,
-                    mode='lines',
+                    mode="lines",
                     name=p.name,
                     # line=dict(
                     #     color='red',
@@ -211,21 +216,24 @@ class PathPCA:
                 )
                 fig.add_trace(trace)
 
-        
         # Set the axis labels and title
-        fig.update_layout(scene=dict(
-            xaxis_title='V1',
-            yaxis_title='V2',
-            zaxis_title='Fitness',
-            aspectratio=dict(x=x_size, y=y_size, z=0.7),
-            camera_eye=dict(x=1.2, y=1.2, z=0.6)
-        ))
+        fig.update_layout(
+            scene=dict(
+                xaxis_title="V1",
+                yaxis_title="V2",
+                zaxis_title="Fitness",
+                aspectratio=dict(x=x_size, y=y_size, z=0.7),
+                camera_eye=dict(x=1.2, y=1.2, z=0.6),
+            )
+        )
         # fig.show()
         if save is not None:
             pyo.plot(fig, filename=save, auto_open=False)
 
     def make_gif(self, save=None):
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), gridspec_kw={'width_ratios': [2, 1]})
+        fig, (ax1, ax2) = plt.subplots(
+            1, 2, figsize=(20, 10), gridspec_kw={"width_ratios": [2, 1]}
+        )
 
         n_points = int(jnp.sqrt(self.true_fit.shape[0]))
         x = self.samples[:, 0]
@@ -246,7 +254,7 @@ class PathPCA:
         ax1.set_title(" + ".join([p.name for p in self.paths]))
         ax1.set_xlabel(f"PC1 - {self.pca.explained_variance_ratio_[0]:.2f}")
         ax1.set_ylabel(f"PC2 - {self.pca.explained_variance_ratio_[1]:.2f}")
-        
+
         ax2.set_xlabel("Generation")
         ax2.set_ylabel("Fitness")
         ax2.set_title("Fitness")
@@ -254,7 +262,9 @@ class PathPCA:
         plt.suptitle(f"{args.jobid} - {args.config}")
 
         for p in self.paths:
-            p.line = ax1.plot(p.projected[:, 0], p.projected[:, 1], label=p.name, zorder = 2)[0]
+            p.line = ax1.plot(
+                p.projected[:, 0], p.projected[:, 1], label=p.name, zorder=2
+            )[0]
             p.fit_plot = ax2.plot(p.gens, p.fitnesses, label=p.name)[0]
         ax1.legend()
 
@@ -265,7 +275,9 @@ class PathPCA:
                 p.line.set_data(p.projected[:frame, 0], p.projected[:frame, 1])
                 p.fit_plot.set_data(p.gens[:frame], p.fitnesses[:frame])
             # update title with generation
-            plt.title(" + ".join([p.name for p in self.paths]) + f" (gen {p.gens[frame]})")
+            plt.title(
+                " + ".join([p.name for p in self.paths]) + f" (gen {p.gens[frame]})"
+            )
             return None
 
         # Create the animation
@@ -280,20 +292,33 @@ class PathPCA:
         # show gif
         plt.close()
 
+
 from sklearn.decomposition import PCA
+
 
 def project(v, d):
     """Project vector v onto d"""
     return jnp.dot(v, d) / jnp.dot(d, d)
 
+
 def project_2d(v, d):
     """Project vector v onto d"""
     return [project(v, dd) for dd in d]
 
+
+def frobenius_norm(A):
+    return jnp.sqrt(jnp.sum(A**2))
+
+
+def pca_ratio(W, X):
+    return frobenius_norm(X @ W) ** 2 / frobenius_norm(X) ** 2
+
+
 class MyPCA:
-    def __init__(self, dim=2):
+    def __init__(self, dim=2, all_dim=2):
         self.dim = dim
-        self.pca = PCA(n_components=dim)
+        self.all_dim = all_dim
+        self.pca = PCA(n_components=all_dim)
         self.pc = []
         self.center = None
         self.explained_variance_ratio_ = None
@@ -303,35 +328,81 @@ class MyPCA:
         self.center = center
         self.pca.fit(genomes)
         self.explained_variance_ratio_ = self.pca.explained_variance_ratio_
-        self.pc = jnp.array([jnp.array(self.pca.components_[i]) for i in range(self.dim)])
+        self._pc = jnp.array(
+            [jnp.array(self.pca.components_[i]) for i in range(self.all_dim)]
+        )
+        self.pc = self._pc[: self.dim]
+        # print("PC shapes", self.pc.shape, self._pc.shape)
 
     def transform(self, genomes):
         genomes = genomes - self.center
         return jnp.array([project_2d(g, self.pc) for g in genomes])
-    
+
     def inverse_transform(self, proj):
         """Reconstruct genomes from projection"""
         return jnp.dot(proj, self.pc) + self.center
 
+    def pca_ratio(self, X):
+        return pca_ratio(self.pc.T, X)
+
+    def all_pca_ratios(self, X, dims=None):
+        ratios = []
+        if dims is None:
+            dims = range(1, self.all_dim + 1)
+        for i in dims:
+            pc = self._pc[:i]
+            new_ratio = pca_ratio(pc.T, X)
+            ratios.append(new_ratio)
+        return jnp.array(ratios)
+
+
 class StepPathPCA(PathPCA):
-    def __init__(self, paths, env_name=None):
+    def __init__(self, paths, env_name=None, max_gens=None, dims=None):
         self.paths = paths
         self.env_name = env_name
 
         self.center = self.paths[0].export_genomes()[-1]
-        
-        self.genomes = jnp.concatenate([p.export_genomes() for p in paths])
-        
-        self.pca = MyPCA(2)
+
+        if max_gens is not None:
+            self.genomes = jnp.concatenate(
+                [p.export_genomes()[:max_gens] for p in paths]
+            )
+        else:
+            self.genomes = jnp.concatenate([p.export_genomes() for p in paths])
+
+        all_dims = max(dims) if dims is not None else 10
+        # print("Dims", dims, "All dims", all_dims)
+        self.pca = MyPCA(2, all_dim=all_dims)
+
+        # print("Genomes shape", self.genomes.shape)
 
         self.pca.fit(self.genomes, self.center)
-        print("Explained variance", self.pca.explained_variance_ratio_)
+        # print("Sklearn variance", jnp.sum(self.pca.explained_variance_ratio_))
+        # print("PC shape", self.pca.pc.shape)
+
+        self.backward_variance = self.pca.all_pca_ratios(self.genomes, dims=dims)
+        # print("Backward variance", self.backward_variance)
+
+        forward_genomes = np.concatenate([p.export_genomes()[max_gens:] for p in paths])
+        self.forward_variance = self.pca.all_pca_ratios(forward_genomes, dims=dims)
+        # print("Forward variance", self.forward_variance)
+
+        close_genomes = np.concatenate(
+            [p.export_genomes()[max_gens : max_gens + 100] for p in paths]
+        )
+        self.close_variance = self.pca.all_pca_ratios(close_genomes, dims=dims)
 
         self.genomes = jnp.concatenate([p.export_genomes() for p in paths])
+        self.total_variance = self.pca.all_pca_ratios(self.genomes, dims=dims)
 
         proj = [p.transform(self.pca) for p in paths]
         proj = jnp.concatenate(proj)
-        self.dim = (proj[:, 0].min(), proj[:, 0].max(), proj[:, 1].min(), proj[:, 1].max())
+        self.dim = (
+            proj[:, 0].min(),
+            proj[:, 0].max(),
+            proj[:, 1].min(),
+            proj[:, 1].max(),
+        )
 
         self.samples = None
         self.genomes = None
@@ -339,10 +410,10 @@ class StepPathPCA(PathPCA):
 
     def __repr__(self):
         return f"StepPCA of {' - '.join([p.name for p in self.paths])} - ref {self.reference}"
-    
+
     def sample_grid(self, n_points=10, dx=0.1):
         # Interpolate as grid
-        x_range = jnp.abs(self.dim[1] - self.dim[0]) 
+        x_range = jnp.abs(self.dim[1] - self.dim[0])
         x_margin = x_range * dx
         y_range = jnp.abs(self.dim[3] - self.dim[2])
         y_margin = y_range * dx
@@ -359,11 +430,14 @@ class StepPathPCA(PathPCA):
         self.samples = jnp.stack([x, y], axis=-1)
         self.genomes = self.pca.inverse_transform(self.samples)
         return self.genomes
-    
+
+
 if __name__ == "__main__":
     # parse first cli argument
     parser = argparse.ArgumentParser()
-    parser.add_argument("save_path", type=str, help="Path to the folder containing the config.json")
+    parser.add_argument(
+        "save_path", type=str, help="Path to the folder containing the config.json"
+    )
     # arg dx: float = 0.5
     parser.add_argument("--dx", type=float, default=0.5, help="dx")
     plot_args = parser.parse_args()
@@ -393,6 +467,7 @@ if __name__ == "__main__":
         if not hasattr(args, k):
             setattr(args, k, v)
 
+    args = fill_default(args)
     EM = setup_es(args)
 
     es = EM.es
@@ -402,9 +477,8 @@ if __name__ == "__main__":
     emitter_state = EM.emitter_state
     repertoire = EM.repertoire
     random_key = EM.random_key
-    wandb_run  = EM. wandb_run
+    wandb_run = EM.wandb_run
     scoring_fn = EM.scoring_fn
-
 
     def scores(fitnesses, descriptors) -> jnp.ndarray:
         return fitnesses
@@ -425,7 +499,7 @@ if __name__ == "__main__":
     }
 
     paths = [["ES"]]
-    
+
     if rl:
         paths = [
             ["Actor"],
@@ -437,23 +511,25 @@ if __name__ == "__main__":
 
     for path in paths:
         print(path)
-        pca = StepPathPCA([Path(path_names[p], name=p) for p in path], env_name=args.env_name)
+        pca = StepPathPCA(
+            [Path(path_names[p], name=p) for p in path], env_name=args.env_name
+        )
 
-        print('_'.join([p.name for p in pca.paths]))
+        print("_".join([p.name for p in pca.paths]))
         pca.sample_grid(n_points, dx=plot_args.dx)
-        # Evaluate 
-        
+        # Evaluate
+
         scoring_fn = EM.scoring_fn
-        pca.fitness_grid(unflatten_fn, scoring_fn)
+        pca.fitness_grid(unflatten_fn, scoring_fn, random_key)
 
         # 3D
-        save=save_path + f"/3dpath_{'_'.join([p.name for p in pca.paths])}.html"
+        save = save_path + f"/3dpath_{'_'.join([p.name for p in pca.paths])}.html"
         pca.plot_3d(save=save)
 
         # 2D
-        save=save_path + f"/2dpath_{'_'.join([p.name for p in pca.paths])}.png"
+        save = save_path + f"/2dpath_{'_'.join([p.name for p in pca.paths])}.png"
         pca.plot(save=save)
 
         # GIF
-        save=save_path + f"/animated_path_{'_'.join([p.name for p in pca.paths])}.gif"
+        save = save_path + f"/animated_path_{'_'.join([p.name for p in pca.paths])}.gif"
         pca.make_gif(save=save)

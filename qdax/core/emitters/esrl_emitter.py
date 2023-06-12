@@ -206,7 +206,6 @@ class ESRLEmitter(Emitter):
         )(self.surrogate_es_emitter)
 
         # print("Init ESRL Emitter", state.rl_state.replay_buffer.current_position)
-
         return state, random_key
 
     @partial(
@@ -255,8 +254,8 @@ class ESRLEmitter(Emitter):
         Returns:
             True if ES update False else
         """
-        cond = emitter_state.metrics.es_updates <= emitter_state.metrics.rl_updates
-
+        # cond = emitter_state.metrics.es_updates <= emitter_state.metrics.rl_updates
+        cond = True
         return cond
 
     @partial(
@@ -288,6 +287,7 @@ class ESRLEmitter(Emitter):
         Returns:
             the updated emitter state
         """
+        # raise NotImplementedError("ES/RL alternance not implemented yet, use --testrl")
 
         key, emitter_state = emitter_state.get_key()
 
@@ -299,15 +299,26 @@ class ESRLEmitter(Emitter):
         # Do RL if the ES has done more steps than RL
         # cond = emitter_state.metrics.es_updates <= emitter_state.metrics.rl_updates
 
-        cond = self.choose_es_update(
-            emitter_state, fitnesses, descriptors, extra_scores
-        )
+        # cond = self.choose_es_update(
+        #     emitter_state, fitnesses, descriptors, extra_scores
+        # )
 
-        emitter_state, pop_extra_scores = jax.lax.cond(
-            cond,
-            self.es_state_update,
-            self.rl_state_update,
-            # Arguments to the two functions:
+        # emitter_state, pop_extra_scores = jax.lax.cond(
+        #     cond,
+        #     self.es_state_update,
+        #     self.rl_state_update,
+        #     # Arguments to the two functions:
+        #     emitter_state,
+        #     repertoire,
+        #     genotypes,
+        #     fitnesses,
+        #     descriptors,
+        #     extra_scores,
+        # )
+
+        cond = True
+
+        emitter_state, pop_extra_scores = self.es_state_update(
             emitter_state,
             repertoire,
             genotypes,
@@ -411,7 +422,13 @@ class ESRLEmitter(Emitter):
 
         # Define scores for es process
         def scores(fitnesses: Fitness, descriptors: Descriptor) -> jnp.ndarray:
-            return fitnesses
+            if self._config.es_config.nses_emitter:
+                # print("Descriptors", descriptors.shape)
+                return novelty_archive.novelty(
+                    descriptors, self._config.es_config.novelty_nearest_neighbors
+                )
+            else:
+                return fitnesses
 
         base_optim_state = emitter_state.es_state.optimizer_state
         # Run es process
@@ -423,15 +440,20 @@ class ESRLEmitter(Emitter):
             actor=emitter_state.rl_state.actor_params,
         )
 
-        # Compute surrogate update
-        surrogate_offspring, _, _, surrogate_extra_scores = self.surrogate_es_emitter(
-            parent=genotypes,
-            optimizer_state=base_optim_state,
-            random_key=random_key,
-            scores_fn=scores,
-            actor=emitter_state.rl_state.actor_params,
-            surrogate_data=emitter_state,
-        )
+        if self._config.es_config.nses_emitter:
+            surrogate_extra_scores = extra_scores
+        
+        else:
+
+            # Compute surrogate update
+            surrogate_offspring, _, _, surrogate_extra_scores = self.surrogate_es_emitter(
+                parent=genotypes,
+                optimizer_state=base_optim_state,
+                random_key=random_key,
+                scores_fn=scores,
+                actor=emitter_state.rl_state.actor_params,
+                surrogate_data=emitter_state,
+            )
 
         random_key = new_random_key
 

@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import jax.numpy as jnp
 import json
 
-from qdax.core.rl_es_parts.es_setup import setup_es
+from qdax.core.rl_es_parts.es_setup import setup_es, fill_default
 
 import argparse
 
@@ -15,8 +15,10 @@ FIT_NORM = {
     "walker2d_uni": (0, 4000),
 }
 
+
 def net_shape(net):
     return jax.tree_map(lambda x: x.shape, net)
+
 
 def surrogate_eval(genomes, emitter, emitter_state):
     random_key = jax.random.PRNGKey(0)
@@ -24,18 +26,20 @@ def surrogate_eval(genomes, emitter, emitter_state):
     networks = jax.vmap(emitter.es_emitter.unflatten)(genomes)
 
     fitnesses, descriptors, extra_scores, random_key = emitter.surrogate_evaluate(
-        networks, 
+        networks,
         random_key=random_key,
         emitter_state=emitter_state,
     )
 
     return fitnesses
 
+
 def distance(save_path, gen):
     offspring_genes = jnp.load(save_path + f"/gen_{gen}_offspring.npy")
     actor_genes = jnp.load(save_path + f"/gen_{gen}_actor.npy")
 
     return jnp.linalg.norm(offspring_genes - actor_genes)
+
 
 # @jax.jit
 def interpolate2d(save_path, gen, n=100):
@@ -49,17 +53,15 @@ def interpolate2d(save_path, gen, n=100):
     v2 = jax.random.normal(key, shape=v1.shape)
     v2 = v2 - jnp.dot(v2, v1) * v1 / jnp.dot(v1, v1)
     v2 = v2 / jnp.linalg.norm(v2) * jnp.linalg.norm(v1)
-    
+
     # Interpolate as grid
-    x, y = jnp.meshgrid(
-        jnp.linspace(-1, 2, n), 
-        jnp.linspace(-1, 1, n)
-    )
+    x, y = jnp.meshgrid(jnp.linspace(-1, 2, n), jnp.linspace(-1, 1, n))
     x = x.reshape((-1, 1))
     y = y.reshape((-1, 1))
     genomes = x * v1 + y * v2 + offspring_genes
 
     return genomes, x, y
+
 
 def plot2d(X, Y, Z, save=None, title="2d interpolation", env_name=None):
     # Create a 3D surface plot
@@ -79,25 +81,22 @@ def plot2d(X, Y, Z, save=None, title="2d interpolation", env_name=None):
     plt.ylabel("v2")
     plt.title(title)
     # same scale both axis
-    plt.gca().set_aspect('equal', adjustable='box')
+    plt.gca().set_aspect("equal", adjustable="box")
     # save
     if save is not None:
         plt.savefig(save)
         plt.close()
     # plt.show()
 
+
 import plotly.graph_objs as go
 import numpy as np
 import plotly.offline as pyo
 
+
 def plot3d(X, Y, Z, save=None):
     # Create a 3D surface plot
-    fig = go.Figure(data=[go.Surface(
-        x=X,
-        y=Y,
-        z=Z,
-        colorscale='Viridis'
-    )])
+    fig = go.Figure(data=[go.Surface(x=X, y=Y, z=Z, colorscale="Viridis")])
 
     min_z = Z.min()
     max_z = Z.max()
@@ -109,37 +108,44 @@ def plot3d(X, Y, Z, save=None):
     y_size = float(y_size)
 
     # Add vertical lines
-    fig.add_trace(go.Scatter3d(
-        x=[0, 0],
-        y=[0, 0],
-        z=[min_z, max_z],
-        marker=dict(line=dict(width=10)),
-        mode='lines',
-        name='ES'
-    ))
+    fig.add_trace(
+        go.Scatter3d(
+            x=[0, 0],
+            y=[0, 0],
+            z=[min_z, max_z],
+            marker=dict(line=dict(width=10)),
+            mode="lines",
+            name="ES",
+        )
+    )
 
-    fig.add_trace(go.Scatter3d(
-        x=[1, 1],
-        y=[0, 0],
-        z=[min_z, max_z],
-        marker=dict(line=dict(width=10)),
-        mode='lines',
-        name='actor'
-    ))
-    
+    fig.add_trace(
+        go.Scatter3d(
+            x=[1, 1],
+            y=[0, 0],
+            z=[min_z, max_z],
+            marker=dict(line=dict(width=10)),
+            mode="lines",
+            name="actor",
+        )
+    )
+
     # Set the axis labels and title
-    fig.update_layout(scene=dict(
-        xaxis_title='ES to actor',
-        yaxis_title='Y',
-        zaxis_title='Fitness',
-        aspectratio=dict(x=x_size, y=y_size, z=0.7),
-        camera_eye=dict(x=1.2, y=1.2, z=0.6)
-    ))
+    fig.update_layout(
+        scene=dict(
+            xaxis_title="ES to actor",
+            yaxis_title="Y",
+            zaxis_title="Fitness",
+            aspectratio=dict(x=x_size, y=y_size, z=0.7),
+            camera_eye=dict(x=1.2, y=1.2, z=0.6),
+        )
+    )
 
     # Show the plot in a web browser
     if save is not None:
         pyo.plot(fig, filename=save, auto_open=False)
     # Do not open in browser
+
 
 def make_plot(EM, gen, env_name):
     es = EM.es
@@ -149,17 +155,14 @@ def make_plot(EM, gen, env_name):
     emitter_state = EM.emitter_state
     repertoire = EM.repertoire
     random_key = EM.random_key
-    wandb_run  = EM. wandb_run
+    wandb_run = EM.wandb_run
     scoring_fn = EM.scoring_fn
 
     print(f"Plotting generation {gen}")
     offspring_genes = jnp.load(save_path + f"/gen_{gen}_offspring.npy")
     offspring = emitter.es_emitter.unflatten(offspring_genes)
 
-    nets = jax.tree_map(
-        lambda x: jnp.repeat(x[None, ...], 100, axis=0),
-        offspring
-    )
+    nets = jax.tree_map(lambda x: jnp.repeat(x[None, ...], 100, axis=0), offspring)
     key = jax.random.PRNGKey(0)
     fitnesses, descriptors, extra_scores, random_key = scoring_fn(nets, key)
 
@@ -174,10 +177,7 @@ def make_plot(EM, gen, env_name):
     fitnesses, descriptors, extra_scores, random_key = scoring_fn(nets, key)
 
     transitions = extra_scores["transitions"]
-    small_trans = jax.tree_map(
-        lambda x: x[:, :10, ...],
-        transitions
-    )
+    small_trans = jax.tree_map(lambda x: x[:, :10, ...], transitions)
     buffer = base_replay_buffer.insert(small_trans)
     print(buffer.current_size)
 
@@ -186,7 +186,7 @@ def make_plot(EM, gen, env_name):
     full_rl_state = emitter_state.rl_state.replace(
         replay_buffer=buffer,
         critic_params=critic,
-        )
+    )
 
     full_emitter_state = emitter_state.replace(rl_state=full_rl_state)
 
@@ -197,9 +197,10 @@ def make_plot(EM, gen, env_name):
 
     # Evaluate with surrogate by batches
     from tqdm import tqdm
+
     surr_fit = []
     for i in tqdm(range(n_batches)):
-        batch = genomes[i * batch_size: (i + 1) * batch_size]
+        batch = genomes[i * batch_size : (i + 1) * batch_size]
         surr_fit.append(surrogate_eval(batch, emitter, full_emitter_state))
 
     surr_fit = jnp.concatenate(surr_fit)
@@ -218,12 +219,25 @@ def make_plot(EM, gen, env_name):
     # 2D plots
     # true fitness
     title = f"True fitness, gen {gen}"
-    plot2d(x_grid, y_grid, z_grid, save=save_path + f"/2dlandscape_{gen}.png", title=title, env_name=env_name)
+    plot2d(
+        x_grid,
+        y_grid,
+        z_grid,
+        save=save_path + f"/2dlandscape_{gen}.png",
+        title=title,
+        env_name=env_name,
+    )
     print(f"Saved as {save_path + f'/2dlandscape_{gen}.png'}")
 
     # surrogate fitness
     title = f"Surrogate fitness, gen {gen}"
-    plot2d(x_grid, y_grid, surr_z_grid, save=save_path + f"/2dsurrogate_{gen}.png", title=title)
+    plot2d(
+        x_grid,
+        y_grid,
+        surr_z_grid,
+        save=save_path + f"/2dsurrogate_{gen}.png",
+        title=title,
+    )
     print(f"Saved as {save_path + f'/2dsurrogate_{gen}.png'}")
 
     # 3D plots
@@ -235,8 +249,10 @@ def make_plot(EM, gen, env_name):
     plot3d(x_grid, y_grid, surr_z_grid, save=save_path + f"/3dsurrogate_{gen}.html")
     print(f"Saved as {save_path + f'/3dsurrogate_{gen}.html'}")
 
+
 def write_report(args, save_path):
     import glob
+
     # Create report_id.md file
     job_id = args.jobid
     # make file
@@ -245,12 +261,16 @@ def write_report(args, save_path):
         f.write(f"# Report {job_id}\n")
         # Date
         import datetime
+
         f.write(f"Date: {datetime.datetime.now()}\n  ")
         # Config
         f.write(f"## {args.env_name}\n")
         f.write(f"## {args.config}\n")
         if args.deterministic:
             f.write(f"## Deterministic\n")
+        # Tag
+        f.write(f"## Tag: {args.tag}\n")
+
         f.write(f"![]({job_id}/plot.png)\n")
         # Plots
         evo_paths = glob.glob(save_path + f"/2dpath_*.png")
@@ -262,10 +282,14 @@ def write_report(args, save_path):
             f.write(f"![]({job_id}/2dpath_{'_'.join(elts)}.png)\n")
         f.write("\n## Fitness landscape\n")
         # Table top
-        f.write("| Generation |          True fitness          |       Surrogate fitness         |\n")
-        f.write("| :--------: | :----------------------------: | :----------------------------: |\n")
+        f.write(
+            "| Generation |          True fitness          |       Surrogate fitness         |\n"
+        )
+        f.write(
+            "| :--------: | :----------------------------: | :----------------------------: |\n"
+        )
         # Table body
-        # get .png files 
+        # get .png files
         gens = glob.glob(save_path + f"/2dlandscape_*.png")
         print(gens)
         gens = [int(re.findall(r"\d+", gen)[2]) for gen in gens]
@@ -273,7 +297,9 @@ def write_report(args, save_path):
         gens.sort()
         print(gens)
         for gen in gens:
-            f.write(f"| {gen} | ![]({job_id}/2dlandscape_{gen}.png) | ![]({job_id}/2dsurrogate_{gen}.png) |\n")
+            f.write(
+                f"| {gen} | ![]({job_id}/2dlandscape_{gen}.png) | ![]({job_id}/2dsurrogate_{gen}.png) |\n"
+            )
         # Table bottom
         f.write("\n")
         # 1D
@@ -283,14 +309,34 @@ def write_report(args, save_path):
         f.write("\n### Normalized comparison\n")
         f.write(f"![]({job_id}/normalized_comparison.png)\n")
 
+        # Stability
+        f.write("\n## Stability\n")
+        f.write(f"![]({job_id}/stability.png)\n")
+        # Get "stability_*.png" files
+        stabs = glob.glob(save_path + f"/stability_*.png")
+        for stab in stabs:
+            # parse
+            elts = (
+                stab.replace(save_path + "/stability_", "")
+                .replace(".png", "")
+                .replace("__", "    \n")
+                .replace("_", " ")
+            )
+            f.write(f"## Stability: \n{elts}\n")
+            stab_path = stab.replace(save_path, job_id)
+            f.write(f"![]({stab_path})\n")
 
 
 if __name__ == "__main__":
     # parse first cli argument
     parser = argparse.ArgumentParser()
-    parser.add_argument("save_path", type=str, help="Path to the folder containing the config.json")
+    parser.add_argument(
+        "save_path", type=str, help="Path to the folder containing the config.json"
+    )
     # List of generations to plot
-    parser.add_argument("--gens", type=int, nargs="+", help="Generations to plot", default=None)
+    parser.add_argument(
+        "--gens", type=int, nargs="+", help="Generations to plot", default=None
+    )
     # --report flag
     parser.add_argument("--report", action="store_true", help="Create report.md file")
     plot_args = parser.parse_args()
@@ -302,9 +348,10 @@ if __name__ == "__main__":
         # get number of generations
         import glob
         import re
+
         gen_files = glob.glob(save_path + "/gen_*.npy")
         # print(gen_files)
-        gen_nums = [int(re.findall(r'\d+', f.split("/")[-1])[0]) for f in gen_files]
+        gen_nums = [int(re.findall(r"\d+", f.split("/")[-1])[0]) for f in gen_files]
         # get unique
         gen_nums = list(set(gen_nums))
         gen_nums.sort()
@@ -349,11 +396,12 @@ if __name__ == "__main__":
             setattr(args, k, v)
 
     def scores(fitnesses, descriptors) -> jnp.ndarray:
-        return fitnesses    
+        return fitnesses
 
     if not plot_args.report:
+        args = fill_default(args)
         EM = setup_es(args)
-        
+
         for gen in plot_args.gens:
             make_plot(EM, gen, env_name=args.env_name)
 

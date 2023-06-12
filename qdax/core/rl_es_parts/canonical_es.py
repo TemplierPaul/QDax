@@ -157,7 +157,10 @@ class CanonicalESEmitter(VanillaESEmitter):
     @property
     def config_string(self):
         """Returns a string describing the config."""
-        s = f"Canonical {self._config.sample_number} "
+        s = ""
+        if self._config.nses_emitter:
+            s += "NSES "
+        s += f"Canonical {self._config.sample_number} "
         s += f"- \u03C3 {self._config.sample_sigma} "
         if self._config.explo_noise > 0:
             s += f"| explo {self._config.explo_noise} "
@@ -462,7 +465,7 @@ class CanonicalESEmitter(VanillaESEmitter):
         """
 
         assert jax.tree_util.tree_leaves(genotypes)[0].shape[0] == 1, (
-            "ERROR: Vanilla-ES generates 1 offspring per generation, "
+            "ERROR: ES generates 1 offspring per generation, "
             + "batch_size should be 1, the inputed batch has size:"
             + str(jax.tree_util.tree_leaves(genotypes)[0].shape[0])
         )
@@ -473,6 +476,7 @@ class CanonicalESEmitter(VanillaESEmitter):
         # Define scores for es process
         def scores(fitnesses: Fitness, descriptors: Descriptor) -> jnp.ndarray:
             if self._config.nses_emitter:
+                # print("Descriptors", descriptors.shape)
                 return novelty_archive.novelty(
                     descriptors, self._config.novelty_nearest_neighbors
                 )
