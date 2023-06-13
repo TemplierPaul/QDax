@@ -49,14 +49,13 @@ log_period = args.log_period
 args.num_gens = args.evals // args.pop
 # num_loops = int(args.num_gens / log_period)
 
-args.policy_hidden_layer_sizes = (
-    args.policy_hidden_layer_sizes,
-    args.policy_hidden_layer_sizes,
-)
-args.critic_hidden_layer_sizes = (
-    args.critic_hidden_layer_sizes,
-    args.critic_hidden_layer_sizes,
-)
+args.policy_hidden_layer_sizes = tuple(
+    [args.policy_hidden_layer_sizes] * args.policy_layer_number
+    ) 
+
+args.critic_hidden_layer_sizes = tuple(
+    [args.critic_hidden_layer_sizes] * args.critic_layer_number
+    ) 
 
 algos = {
     "open": "OpenAI",

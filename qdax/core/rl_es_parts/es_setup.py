@@ -441,10 +441,22 @@ def get_es_parser():
         help="Policy network hidden layer sizes",
     )
     parser.add_argument(
+        "--policy_layer_number",
+        type=int,
+        default=2,
+        help="Policy network hidden layer number",
+    )
+    parser.add_argument(
         "--critic_hidden_layer_sizes",
         type=int,
         default=128,
         help="critic network hidden layer sizes",
+    )
+    parser.add_argument(
+        "--critic_layer_number",
+        type=int,
+        default=2,
+        help="Critic network hidden layer number",
     )
     parser.add_argument(
         "--deterministic", default=False, action="store_true", help="Fixed init state"
