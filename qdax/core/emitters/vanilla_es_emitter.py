@@ -143,6 +143,8 @@ class VanillaESConfig:
     actor_injection: bool = False
     nb_injections: int = 1
     injection_clipping = False
+    groupsort: bool = False
+    groupsort_k: int = 1
     explo_noise: float = 0.0
 
 

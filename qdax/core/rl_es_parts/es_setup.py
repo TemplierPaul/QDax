@@ -6,7 +6,7 @@ from typing import Dict
 import jax
 
 import jax.numpy as jnp
-
+import flax.linen as nn
 import functools
 import argparse
 
@@ -95,11 +95,21 @@ def setup_es(args):
     random_key = jax.random.PRNGKey(args.seed)
 
     # Init policy network
+    activation = nn.relu
+    if args.groupsort:
+        print("Using groupsort")
+        if args.groupsort_k != 1:
+            raise NotImplementedError(
+                "Groupsort with k != 1 not implemented for MLPs"
+            )
+        activation = jnp.sort
+
     policy_layer_sizes = args.policy_hidden_layer_sizes + (env.action_size,)
     policy_network = MLP(
         layer_sizes=policy_layer_sizes,
         kernel_init=jax.nn.initializers.lecun_uniform(),
         final_activation=jnp.tanh,
+        activation=activation,
     )
 
     # Init population of controllers
@@ -175,6 +185,8 @@ def setup_es(args):
             nb_injections=args.nb_injections,
             episode_length=args.episode_length,
             explo_noise=args.explo_noise,
+            groupsort=args.groupsort,
+            groupsort_k=args.groupsort_k,
         )
 
         es_emitter = OpenESEmitter(
@@ -185,6 +197,7 @@ def setup_es(args):
             num_descriptors=env.behavior_descriptor_length,
         )
     elif args.es in ["canonical"]:
+        print(CanonicalESConfig.__dataclass_fields__.keys())
         es_config = CanonicalESConfig(
             nses_emitter=args.nses,
             sample_number=args.pop,
@@ -197,6 +210,8 @@ def setup_es(args):
             episode_length=args.episode_length,
             injection_clipping=args.injection_clip,
             explo_noise=args.explo_noise,
+            groupsort=args.groupsort,
+            groupsort_k=args.groupsort_k,
         )
 
         es_emitter = CanonicalESEmitter(
@@ -216,6 +231,8 @@ def setup_es(args):
             nb_injections=args.nb_injections,
             episode_length=args.episode_length,
             explo_noise=args.explo_noise,
+            groupsort=args.groupsort,
+            groupsort_k=args.groupsort_k,
         )
 
         es_emitter = MonoCMAESEmitter(
@@ -234,6 +251,8 @@ def setup_es(args):
             nb_injections=args.nb_injections,
             episode_length=args.episode_length,
             explo_noise=args.explo_noise,
+            groupsort=args.groupsort,
+            groupsort_k=args.groupsort_k,
         )
 
         es_emitter = RandomEmitter(
@@ -251,6 +270,8 @@ def setup_es(args):
             novelty_nearest_neighbors=args.novelty_nearest_neighbors,
             episode_length=args.episode_length,
             explo_noise=args.explo_noise,
+            groupsort=args.groupsort,
+            groupsort_k=args.groupsort_k,
         )
 
         es_emitter = NoESEmitter(
@@ -427,6 +448,12 @@ def get_es_parser():
     )
     parser.add_argument(
         "--deterministic", default=False, action="store_true", help="Fixed init state"
+    )
+    parser.add_argument(
+        "--groupsort", default=False, action="store_true", help="Groupsort activation function"
+    )
+    parser.add_argument(
+        "--groupsort_k", type=int, default=1, help="Number of groups for groupsort"
     )
 
     # Exploration noise, default 0

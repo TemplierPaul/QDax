@@ -164,6 +164,8 @@ class CanonicalESEmitter(VanillaESEmitter):
         s += f"- \u03C3 {self._config.sample_sigma} "
         if self._config.explo_noise > 0:
             s += f"| explo {self._config.explo_noise} "
+        if self._config.groupsort:
+            s += f"| GS {self._config.groupsort_k} "
         # learning rate
         # s += f"- lr {self._config.learning_rate} "
         if self._config.actor_injection:
