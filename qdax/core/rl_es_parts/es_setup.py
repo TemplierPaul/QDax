@@ -95,14 +95,27 @@ def setup_es(args):
     random_key = jax.random.PRNGKey(args.seed)
 
     # Init policy network
-    activation = nn.relu
-    if args.groupsort:
+    if args.groupsort or args.activation == "sort":
         print("Using groupsort")
         if args.groupsort_k != 1:
             raise NotImplementedError(
                 "Groupsort with k != 1 not implemented for MLPs"
             )
-        activation = jnp.sort
+        args.groupsort = True
+        args.activation = "sort"
+
+    activations = {
+        "relu": nn.relu,
+        "tanh": jnp.tanh,
+        "sigmoid": jax.nn.sigmoid,
+        "sort": jnp.sort,
+    }
+    if args.activation not in activations:
+        raise NotImplementedError(
+            f"Activation {args.activation} not implemented, choose one of {activations.keys()}"
+        )
+    
+    activation = activations[args.activation]
 
     policy_layer_sizes = args.policy_hidden_layer_sizes + (env.action_size,)
     policy_network = MLP(
@@ -112,6 +125,9 @@ def setup_es(args):
         activation=activation,
     )
 
+    args.policy_network = f"MLP {args.policy_layer_number}x{args.policy_hidden_layer_sizes[0]} {args.activation} -> tanh"
+    print("Policy network", args.policy_network)
+    
     # Init population of controllers
     random_key, subkey = jax.random.split(random_key)
     keys = jax.random.split(subkey, num=1)
@@ -197,7 +213,7 @@ def setup_es(args):
             num_descriptors=env.behavior_descriptor_length,
         )
     elif args.es in ["canonical"]:
-        print(CanonicalESConfig.__dataclass_fields__.keys())
+        # print(CanonicalESConfig.__dataclass_fields__.keys())
         es_config = CanonicalESConfig(
             nses_emitter=args.nses,
             sample_number=args.pop,
@@ -434,6 +450,8 @@ def get_es_parser():
     # parser.add_argument('--gen', type=int, default=10000, help='Generations', dest='num_iterations')
     parser.add_argument("--evals", type=int, default=1000000, help="Evaluations")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+
+    # Networks
     parser.add_argument(
         "--policy_hidden_layer_sizes",
         type=int,
@@ -466,6 +484,13 @@ def get_es_parser():
     )
     parser.add_argument(
         "--groupsort_k", type=int, default=1, help="Number of groups for groupsort"
+    )
+    # activation
+    parser.add_argument(
+        "--activation",
+        type=str,
+        default="relu",
+        help="Activation function for policy network",
     )
 
     # Exploration noise, default 0
