@@ -109,11 +109,16 @@ class CanonicalESEmitter(VanillaESEmitter):
             ), "Exploration noise requires 2 different rollout functions"
 
         # Actor injection
+        
         if self._config.actor_injection:
             print(f"Doing actor injection x {self._config.nb_injections}")
             self._actor_injection = self._inject_actor
+            self.is_injected = [False] * (self._config.sample_number - self._config.nb_injections) + [True] * self._config.nb_injections
+            self.is_injected = jnp.array(self.is_injected)
         else:
             print("Not doing actor injection")
+            self.is_injected = [False] * self._config.sample_number
+            self.is_injected = jnp.array(self.is_injected)
 
             def no_injection(sample_noise, actor, parent):
                 # Applying noise
@@ -404,6 +409,10 @@ class CanonicalESEmitter(VanillaESEmitter):
         weights = jnp.where(ranks <= mu, jnp.log(mu + 0.5) - jnp.log(ranks), 0)
         weights /= jnp.sum(weights)  # Normalizing the weights
 
+        actor_weight = self.is_injected.astype(jnp.float32) * weights
+        actor_weight = jnp.sum(actor_weight)
+        extra_scores["actor_weight"] = actor_weight
+
         # Reshaping rank to match shape of genotype_noise
         weights = jax.tree_map(
             lambda x: jnp.reshape(
@@ -413,9 +422,9 @@ class CanonicalESEmitter(VanillaESEmitter):
         )
 
         # Computing the update
-        # Noise is multiplied by rank
+        # Noise is multiplied by rank-based weight
         gradient = jax.tree_map(
-            lambda noise, rank: jnp.multiply(noise, rank),
+            lambda noise, w: jnp.multiply(noise, w),
             gradient_noise,
             weights,
         )

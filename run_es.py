@@ -171,6 +171,7 @@ from tqdm import tqdm
 bar = tqdm(range(args.evals))
 evaluations = 0
 gen = 0
+
 try:
     while evaluations < args.evals:
         start_time = time.time()
@@ -187,7 +188,7 @@ try:
         timelapse = time.time() - start_time
 
         # log metrics
-        gen += 1
+        gen += log_period
         logged_metrics = {
             "time": timelapse,
             # "loop": 1 + i,

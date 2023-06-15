@@ -220,7 +220,12 @@ class VanillaESEmitter(Emitter):
         # Actor injection
         if self._config.actor_injection:
             self._actor_injection = self._inject_actor
+            self.is_injected = [False] * (self._config.sample_number - self._config.nb_injections) + [True] * self._config.nb_injections
+            self.is_injected = jnp.array(self.is_injected)
         else:
+            print("Not doing actor injection")
+            self.is_injected = [False] * self._config.sample_number
+            self.is_injected = jnp.array(self.is_injected)
             self._actor_injection = lambda x, a, p: x
 
         # Add a wrapper to the scoring function to handle the surrogate data
@@ -653,6 +658,11 @@ class VanillaESEmitter(Emitter):
         if "injection_norm" in extra_scores:
             metrics = metrics.replace(
                 injection_norm=extra_scores["injection_norm"],
+            )
+
+        if "actor_weight" in extra_scores:
+            metrics = metrics.replace(
+                actor_weight=extra_scores["actor_weight"],
             )
 
         # Evaluating offspring multiple time

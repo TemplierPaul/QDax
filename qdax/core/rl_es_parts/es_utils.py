@@ -82,6 +82,10 @@ class ESMetrics:
     injection_norm: float = -jnp.inf
 
     ## ES + RL
+    # Injection 
+    actor_weight: float = -jnp.inf
+    # actor_rank: float = -jnp.inf
+    # actor_impact: float = -jnp.inf
     # Step size metrics
     rl_step_norm: float = -jnp.inf
     es_step_norm: float = -jnp.inf
