@@ -127,6 +127,8 @@ def setup_es(args):
 
     args.policy_network = f"MLP {args.policy_layer_number}x{args.policy_hidden_layer_sizes[0]} {args.activation} -> tanh"
     print("Policy network", args.policy_network)
+    args.critic_network = f"MLP {args.critic_layer_number}x{args.critic_hidden_layer_sizes[0]} relu -> none"
+    print("Critic network", args.critic_network)
     
     # Init population of controllers
     random_key, subkey = jax.random.split(random_key)
