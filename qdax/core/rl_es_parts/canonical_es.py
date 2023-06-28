@@ -44,6 +44,7 @@ class CanonicalESConfig(VanillaESConfig):
     novelty_nearest_neighbors: int = 10
     actor_injection: bool = False
     injection_clipping: bool = False
+    return_population:bool = False
 
 
 class CanonicalESEmitterState(VanillaESEmitterState):
@@ -76,7 +77,7 @@ class CanonicalESEmitter(VanillaESEmitter):
 
     def __init__(
         self,
-        config: VanillaESConfig,
+        config: CanonicalESConfig,
         rollout_fn: Callable[
             [Genotype, RNGKey], Tuple[Fitness, Descriptor, ExtraScores, RNGKey]
         ],
@@ -143,8 +144,12 @@ class CanonicalESEmitter(VanillaESEmitter):
             networks, random_key
         )
 
+        base_es_emitter = self._base_es_emitter
+        if self._config.return_population:
+            base_es_emitter = self._whole_pop_base_es_emitter
+
         self._es_emitter = partial(
-            self._base_es_emitter,
+            base_es_emitter,
             fitness_function=extended_scoring,
             surrogate_data=None,
         )
@@ -396,6 +401,115 @@ class CanonicalESEmitter(VanillaESEmitter):
         extra_scores["injection_norm"] = norm_factor
 
         extra_scores["population_fitness"] = fitnesses
+
+        # Computing rank, with or without normalisation
+        scores = scores_fn(fitnesses, descriptors)
+
+        ranking_indices = jnp.argsort(scores, axis=0)
+        ranks = jnp.argsort(ranking_indices, axis=0)
+        ranks = self._config.sample_number - ranks  # Inverting the ranks
+
+        mu = self._config.canonical_mu  # Number of parents
+
+        weights = jnp.where(ranks <= mu, jnp.log(mu + 0.5) - jnp.log(ranks), 0)
+        weights /= jnp.sum(weights)  # Normalizing the weights
+
+        actor_weight = self.is_injected.astype(jnp.float32) * weights
+        actor_weight = jnp.sum(actor_weight)
+        extra_scores["actor_weight"] = actor_weight
+
+        # Reshaping rank to match shape of genotype_noise
+        weights = jax.tree_map(
+            lambda x: jnp.reshape(
+                jnp.repeat(weights.ravel(), x[0].ravel().shape[0], axis=0), x.shape
+            ),
+            gradient_noise,
+        )
+
+        # Computing the update
+        # Noise is multiplied by rank-based weight
+        gradient = jax.tree_map(
+            lambda noise, w: jnp.multiply(noise, w),
+            gradient_noise,
+            weights,
+        )
+        # Noise is summed over the sample dimension and multiplied by sigma
+        gradient = jax.tree_map(
+            lambda x: jnp.reshape(x, (sample_number, -1)),
+            gradient,
+        )
+        gradient = jax.tree_map(
+            lambda g, p: jnp.reshape(
+                jnp.sum(g, axis=0) * self._config.sample_sigma,
+                p.shape,
+            ),
+            gradient,
+            parent,
+        )
+
+        offspring = optax.apply_updates(parent, gradient)
+
+        return offspring, optimizer_state, random_key, extra_scores
+    
+    @partial(
+        jax.jit,
+        static_argnames=("self", "scores_fn", "fitness_function"),
+    )
+    def _whole_pop_base_es_emitter(
+        self,
+        parent: Genotype,
+        optimizer_state: optax.OptState,
+        random_key: RNGKey,
+        scores_fn: Callable[[Fitness, Descriptor], jnp.ndarray],
+        fitness_function: Callable[[Genotype], RNGKey],
+        surrogate_data=None,
+        actor: Genotype = None,
+    ) -> Tuple[Genotype, optax.OptState, RNGKey]:
+        """Main es component, given a parent and a way to infer the score from
+        the fitnesses and descriptors fo its es-samples, return its
+        approximated-gradient-generated offspring.
+
+        Args:
+            parent: the considered parent.
+            scores_fn: a function to infer the score of its es-samples from
+                their fitness and descriptors.
+            random_key
+
+        Returns:
+            The approximated-gradients-generated offspring and a new random_key.
+        """
+
+        random_key, subkey = jax.random.split(random_key)
+
+        # Sampling mirror noise
+        sample_number = self._config.sample_number
+
+        # Sampling noise
+        sample_noise = jax.tree_map(
+            lambda x: jax.random.normal(
+                key=subkey,
+                shape=jnp.repeat(x, sample_number, axis=0).shape,
+            ),
+            parent,
+        )
+
+        # Actor injection if needed in config and if actor is not None
+        gradient_noise, networks, norm_factor = self._actor_injection(
+            sample_noise,
+            actor,
+            parent,
+        )
+
+        # Evaluating samples
+        fitnesses, descriptors, extra_scores, random_key = fitness_function(
+            networks, random_key, surrogate_data
+        )
+
+        extra_scores["injection_norm"] = norm_factor
+
+        extra_scores["population_fitness"] = fitnesses
+        extra_scores["population_descriptors"] = descriptors
+        extra_scores["population_networks"] = networks
 
         # Computing rank, with or without normalisation
         scores = scores_fn(fitnesses, descriptors)
