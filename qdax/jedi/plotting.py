@@ -1,6 +1,7 @@
 from qdax.utils.plotting import plot_2d_map_elites_repertoire
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
+import jax
 
 def net_shape(net):
     return jax.tree_map(lambda x: x.shape, net)
@@ -86,7 +87,7 @@ def add_maze(ax):
 
 def plot_jedi_results(repertoire, logs, title, min_bd, max_bd, log_scale=True):
     n_plots = 4
-    fig, ax = plt.subplots(1, 3, figsize=(n_plots*5, 4))
+    fig, ax = plt.subplots(1, n_plots, figsize=(n_plots*5, 4))
     x_axis = 'frames'
     x_label = 'Environment steps'
     plt.suptitle(title)

@@ -17,7 +17,7 @@ def closest_genotype(repertoire, target_bd):
     return start_genome, start_bd
 
 def stochastic_closest(repertoire, target_bd, top_n=5):
-    pass
+    raise NotImplementedError("TODO")
 
 def aim_for(target, repertoire, es, config, base_es_emitter_state, random_key):
     target = jnp.array(target).astype(jnp.float32)
