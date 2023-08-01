@@ -10,21 +10,32 @@ from jax import numpy as jnp
 from qdax.core.containers.repertoire import Repertoire
 from qdax.core.emitters.emitter import Emitter, EmitterState
 from qdax.core.neuroevolution.buffers.buffer import QDTransition, ReplayBuffer
-from qdax.core.neuroevolution.losses.td3_loss import make_td3_loss_fn
-from qdax.core.neuroevolution.losses.elastic_pg_loss import elastic_td3_loss_fn
+
+# from qdax.core.neuroevolution.losses.td3_loss import make_td3_loss_fn
+from qdax.core.neuroevolution.losses.elastic_pg_loss import (
+    elastic_td3_loss_fn,
+    sqrt_elastic_td3_loss_fn,
+)
 from qdax.core.neuroevolution.networks.networks import QModule
 from qdax.environments.base_wrappers import QDEnv
 from qdax.types import Descriptor, ExtraScores, Fitness, Genotype, Params, RNGKey
 
-from qdax.core.emitters.qpg_emitter import QualityPGConfig, QualityPGEmitterState, QualityPGEmitter
+from qdax.core.emitters.qpg_emitter import (
+    QualityPGConfig,
+    QualityPGEmitterState,
+    QualityPGEmitter,
+)
 
 from qdax.core.emitters.vanilla_es_emitter import flatten_genotype
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
+
 
 @dataclass
 class CustomQualityPGConfig(QualityPGConfig):
     elastic_pull: float = 0.01
     surrogate_batch: int = 1024
+    sqrt_gdr: bool = False
+
 
 class CustomQualityPGEmitterState(QualityPGEmitterState):
     es_center: Params
@@ -64,8 +75,11 @@ class CustomQualityPGEmitter(Emitter):
         self._critic_network = critic_network
         self.critic_fn = critic_network.apply
 
-        # Set up the losses and optimizers - return the opt states
-        self._policy_loss_fn, self._critic_loss_fn = elastic_td3_loss_fn(
+        loss_fn = elastic_td3_loss_fn
+        if self._config.sqrt_gdr:
+            loss_fn = sqrt_elastic_td3_loss_fn
+
+        self._policy_loss_fn, self._critic_loss_fn = loss_fn(
             policy_fn=policy_network.apply,
             critic_fn=critic_network.apply,
             reward_scaling=self._config.reward_scaling,
@@ -95,7 +109,10 @@ class CustomQualityPGEmitter(Emitter):
         s = f"TD3 {self._config.num_critic_training_steps} - PG {self._config.num_pg_training_steps} "
         s += f"- lr A {self._config.actor_learning_rate} / C {self._config.critic_learning_rate}"
         if self._config.elastic_pull > 0:
-            s += f"- \u03B5 {self._config.elastic_pull}" # \u03B5 is epsilon
+            if self._config.sqrt_gdr:
+                s += f"- \u03B5² {self._config.elastic_pull}"  # \u03B5 is epsilon
+            else:
+                s += f"- \u03B5 {self._config.elastic_pull}"  # \u03B5 is epsilon
         return s
 
     @property
@@ -156,7 +173,7 @@ class CustomQualityPGEmitter(Emitter):
             population=p,
             length=n,
         )
-        
+
         dummy_transition = QDTransition.init_dummy(
             observation_dim=observation_size,
             action_dim=action_size,
@@ -196,11 +213,13 @@ class CustomQualityPGEmitter(Emitter):
         self.critic_tree_def = tree_def
         self.critic_layer_sizes = sizes.tolist()
         # print("layer_sizes", self.critic_layer_sizes)
-        self.critic_split_indices = jnp.cumsum(jnp.array(self.critic_layer_sizes))[:-1].tolist()
+        self.critic_split_indices = jnp.cumsum(jnp.array(self.critic_layer_sizes))[
+            :-1
+        ].tolist()
         # print("split_indices", self.split_indices)
 
         return emitter_state, random_key
-    
+
     @partial(
         jax.jit,
         static_argnames=("self",),
@@ -210,7 +229,6 @@ class CustomQualityPGEmitter(Emitter):
         # print("Flatten", flat_variables)
         vect = jnp.concatenate([jnp.ravel(x) for x in flat_variables])
         return vect
-    
 
     @partial(
         jax.jit,
@@ -221,7 +239,9 @@ class CustomQualityPGEmitter(Emitter):
         # print("Unflatten", vect.shape)
         split_genome = jnp.split(vect, self.critic_split_indices)
         # Reshape to the original shape
-        split_genome = [x.reshape(s) for x, s in zip(split_genome, self.critic_layer_shapes)]
+        split_genome = [
+            x.reshape(s) for x, s in zip(split_genome, self.critic_layer_shapes)
+        ]
 
         # Unflatten the tree
         new_net = tree_unflatten(self.critic_tree_def, split_genome)
@@ -398,7 +418,7 @@ class CustomQualityPGEmitter(Emitter):
         transitions, random_key = replay_buffer.sample(
             random_key, sample_size=self._config.batch_size
         )
-        
+
         # es_center = emitter_state.es_center
         es_center = jax.tree_util.tree_map(lambda x: x[0], emitter_state.es_center)
 
@@ -418,7 +438,11 @@ class CustomQualityPGEmitter(Emitter):
         )
 
         # Update greedy actor
-        (actor_optimizer_state, actor_params, target_actor_params,) = jax.lax.cond(
+        (
+            actor_optimizer_state,
+            actor_params,
+            target_actor_params,
+        ) = jax.lax.cond(
             emitter_state.steps % self._config.policy_delay == 0,
             lambda x: self._update_actor(*x),
             lambda _: (
@@ -461,7 +485,6 @@ class CustomQualityPGEmitter(Emitter):
         transitions: QDTransition,
         random_key: RNGKey,
     ) -> Tuple[Params, Params, Params, RNGKey]:
-
         # compute loss and gradients
         random_key, subkey = jax.random.split(random_key)
         critic_loss, critic_gradient = jax.value_and_grad(self._critic_loss_fn)(
@@ -498,7 +521,6 @@ class CustomQualityPGEmitter(Emitter):
         transitions: QDTransition,
         es_center: Params,
     ) -> Tuple[optax.OptState, Params, Params]:
-
         # Update greedy actor
         policy_loss, policy_gradient = jax.value_and_grad(self._policy_loss_fn)(
             actor_params,
@@ -569,7 +591,11 @@ class CustomQualityPGEmitter(Emitter):
                 new_policy_optimizer_state,
             ), ()
 
-        (emitter_state, policy_params, policy_optimizer_state,), _ = jax.lax.scan(
+        (
+            emitter_state,
+            policy_params,
+            policy_optimizer_state,
+        ), _ = jax.lax.scan(
             scan_train_policy,
             (emitter_state, policy_params, policy_optimizer_state),
             (),
@@ -627,13 +653,12 @@ class CustomQualityPGEmitter(Emitter):
         policy_params: Params,
         transitions: QDTransition,
     ) -> Tuple[optax.OptState, Params]:
-
         # compute loss
         _policy_loss, policy_gradient = jax.value_and_grad(self._policy_loss_fn)(
             policy_params,
             critic_params,
             transitions,
-            es_center=policy_params, # No L2 regu on ES agents
+            es_center=policy_params,  # No L2 regu on ES agents
         )
         # Compute gradient and update policies
         (
@@ -649,7 +674,7 @@ class CustomQualityPGEmitter(Emitter):
         static_argnames=("self",),
     )
     def surrogate_eval(
-        self, 
+        self,
         policy_params: Params,
         critic_params: Params,
         transitions: QDTransition,
@@ -671,19 +696,19 @@ class CustomQualityPGEmitter(Emitter):
         return surrogate
 
 
-
 class ESTargetQualityPGEmitter(CustomQualityPGEmitter):
     """
     QPG Emitter with ES center as target policy for the critic update
     """
+
     @property
     def config_string(self):
         s = f"ES target | TD3 {self._config.num_critic_training_steps} - PG {self._config.num_pg_training_steps} "
         s += f"- lr A {self._config.actor_learning_rate} / C {self._config.critic_learning_rate} "
         if self._config.elastic_pull > 0:
-            s += f"- \u03B5 {self._config.elastic_pull}" # \u03B5 is epsilon
+            s += f"- \u03B5 {self._config.elastic_pull}"  # \u03B5 is epsilon
         return s
-    
+
     @partial(jax.jit, static_argnames=("self",))
     def _train_critics(
         self, emitter_state: CustomQualityPGEmitterState
@@ -708,7 +733,7 @@ class ESTargetQualityPGEmitter(CustomQualityPGEmitter):
         transitions, random_key = replay_buffer.sample(
             random_key, sample_size=self._config.batch_size
         )
-        
+
         # es_center = emitter_state.es_center
         es_center = jax.tree_util.tree_map(lambda x: x[0], emitter_state.es_center)
 
@@ -721,14 +746,18 @@ class ESTargetQualityPGEmitter(CustomQualityPGEmitter):
         ) = self._update_critic(
             critic_params=emitter_state.critic_params,
             target_critic_params=emitter_state.target_critic_params,
-            target_actor_params=es_center, # ES center as target policy
+            target_actor_params=es_center,  # ES center as target policy
             critic_optimizer_state=emitter_state.critic_optimizer_state,
             transitions=transitions,
             random_key=random_key,
         )
 
         # Update greedy actor
-        (actor_optimizer_state, actor_params, target_actor_params,) = jax.lax.cond(
+        (
+            actor_optimizer_state,
+            actor_params,
+            target_actor_params,
+        ) = jax.lax.cond(
             emitter_state.steps % self._config.policy_delay == 0,
             lambda x: self._update_actor(*x),
             lambda _: (

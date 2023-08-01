@@ -121,6 +121,10 @@ class ESMetrics:
     # Spearman-based surrogate ES
     spearman_omega: float = -jnp.inf
 
+    # TR-GDR
+    tr_gdr_lambda: float = 0.0
+    tr_gdr_d: float = -jnp.inf
+
 
 class ESRepertoire(MapElitesRepertoire):
     """A MapElitesRepertoire for ES that keeps the fitness of the last added ES center for logging"""

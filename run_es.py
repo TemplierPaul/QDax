@@ -20,6 +20,7 @@ if (
     or args.spearman
     or args.actor_injection
     or args.es == "multiactor"
+    or args.trgdr
 ):
     args.rl = True
     # args.actor_injection = False
@@ -41,6 +42,7 @@ if args.debug:
         "critic_hidden_layer_sizes": 16,
         "output": "debug",
         "surrogate_batch": 10,
+        "pg_training": 20,
     }
     for k, v in debug_values.items():
         setattr(args, k, v)
@@ -51,11 +53,11 @@ args.num_gens = args.evals // args.pop
 
 args.policy_hidden_layer_sizes = tuple(
     [args.policy_hidden_layer_sizes] * args.policy_layer_number
-    ) 
+)
 
 args.critic_hidden_layer_sizes = tuple(
     [args.critic_hidden_layer_sizes] * args.critic_layer_number
-    ) 
+)
 
 algos = {
     "open": "OpenAI",
@@ -222,6 +224,7 @@ try:
         bar.set_description(
             f"Gen: {gen}, qd_score: {logged_metrics['qd_score']:.2f}, max_fitness: {logged_metrics['max_fitness']:.2f}, coverage: {logged_metrics['coverage']:.2f}, time: {timelapse:.2f}"
         )
+        # print("Lambda", logged_metrics["tr_gdr_lambda"])
 except KeyboardInterrupt:
     print("Interrupted by user")
 finally:

@@ -45,7 +45,10 @@ from qdax.core.emitters.custom_qpg_emitter import (
     CustomQualityPGEmitter,
     ESTargetQualityPGEmitter,
 )
-
+from qdax.core.emitters.tr_gdr_qpg_emitter import (
+    TRGDRConfig,
+    TRGDREmitter,
+)
 from qdax.core.emitters.esrl_emitter import ESRLConfig, ESRLEmitter
 from qdax.core.emitters.test_gradients import TestGradientsEmitter
 from qdax.core.emitters.carlies_emitter import CARLIES
@@ -78,6 +81,290 @@ class ESMaker:
             setattr(self, k, v)
 
 
+# Setup parser for command-line arguments.
+def get_es_parser():
+    # Argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--env",
+        type=str,
+        default="walker2d_uni",
+        help="Environment name",
+        # choices=['ant_uni', 'hopper_uni', 'walker2d_uni', 'halfcheetah_uni', 'humanoid_uni', 'ant_omni', 'humanoid_omni', 'anttrap'],
+        dest="env_name",
+    )
+    parser.add_argument(
+        "--episode_length", type=int, default=1000, help="Number of steps per episode"
+    )
+    # parser.add_argument('--gen', type=int, default=10000, help='Generations', dest='num_iterations')
+    parser.add_argument("--evals", type=int, default=1000000, help="Evaluations")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+
+    # Networks
+    parser.add_argument(
+        "--policy_hidden_layer_sizes",
+        type=int,
+        default=128,
+        help="Policy network hidden layer sizes",
+    )
+    parser.add_argument(
+        "--policy_layer_number",
+        type=int,
+        default=2,
+        help="Policy network hidden layer number",
+    )
+    parser.add_argument(
+        "--critic_hidden_layer_sizes",
+        type=int,
+        default=128,
+        help="critic network hidden layer sizes",
+    )
+    parser.add_argument(
+        "--critic_layer_number",
+        type=int,
+        default=2,
+        help="Critic network hidden layer number",
+    )
+    parser.add_argument(
+        "--deterministic", default=False, action="store_true", help="Fixed init state"
+    )
+    parser.add_argument(
+        "--groupsort",
+        default=False,
+        action="store_true",
+        help="Groupsort activation function",
+    )
+    parser.add_argument(
+        "--groupsort_k", type=int, default=1, help="Number of groups for groupsort"
+    )
+    # activation
+    parser.add_argument(
+        "--activation",
+        type=str,
+        default="relu",
+        help="Activation function for policy network",
+    )
+
+    # Exploration noise, default 0
+    parser.add_argument(
+        "--explo_noise",
+        type=float,
+        default=0.0,
+        help="Exploration noise (Gaussian)",
+    )
+
+    # Map-Elites
+    parser.add_argument(
+        "--num_init_cvt_samples",
+        type=int,
+        default=50000,
+        help="Number of samples to use for CVT initialization",
+    )
+    parser.add_argument(
+        "--num_centroids", type=int, default=1024, help="Number of centroids"
+    )
+    parser.add_argument(
+        "--min_bd",
+        type=float,
+        default=0.0,
+        help="Minimum value for the behavior descriptor",
+    )
+    parser.add_argument(
+        "--max_bd",
+        type=float,
+        default=1.0,
+        help="Maximum value for the behavior descriptor",
+    )
+
+    # ES
+    # ES type
+    parser.add_argument(
+        "--es",
+        type=str,
+        default="es",
+        help="ES type",
+        choices=["open", "canonical", "cmaes", "random", "multiactor"],
+    )
+    parser.add_argument("--pop", type=int, default=512, help="Population size")
+    parser.add_argument(
+        "--es_sigma",
+        type=float,
+        default=0.01,
+        help="Standard deviation of the Gaussian distribution",
+    )
+    parser.add_argument(
+        "--sample_mirror", type=bool, default=True, help="Mirror sampling in ES"
+    )
+    parser.add_argument(
+        "--sample_rank_norm", type=bool, default=True, help="Rank normalization in ES"
+    )
+    parser.add_argument(
+        "--adam_optimizer",
+        type=bool,
+        default=True,
+        help="Use Adam optimizer instead of SGD",
+    )
+    parser.add_argument(
+        "--learning_rate",
+        type=float,
+        default=0.01,
+        help="Learning rate for ES optimizer",
+    )
+    parser.add_argument(
+        "--l2_coefficient",
+        type=float,
+        default=0.02,
+        help="L2 coefficient for Adam optimizer",
+    )
+
+    # NSES
+    parser.add_argument(
+        "--nses", default=False, action="store_true", help="Use NSES instead of ES"
+    )
+    parser.add_argument(
+        "--novelty_nearest_neighbors",
+        type=int,
+        default=10,
+        help="Number of nearest neighbors to use for novelty computation",
+    )
+
+    # RL
+    parser.add_argument("--rl", default=False, action="store_true", help="Add RL")
+    parser.add_argument(
+        "--testrl", default=False, action="store_true", help="Add RL/ES testing"
+    )
+    parser.add_argument(
+        "--carlies", default=False, action="store_true", help="Add CARLIES"
+    )
+    parser.add_argument(
+        "--elastic_pull",
+        type=float,
+        default=0,
+        help="Penalization for pulling the actor too far from the ES center",
+    )
+    parser.add_argument(
+        "--trgdr", default=False, action="store_true", help="Trust Region GDR"
+    )
+    parser.add_argument(
+        "--sqrtgdr", default=False, action="store_true", help="Use sqrt GDR"
+    )
+
+    # Pull type
+    # parser.add_argument(
+    #     "--pull_type",
+    #     type=str,
+    #     default="default",
+    #     help="Pull type",
+    #     choices=["default", "distance", "normalized"],
+    # )
+    parser.add_argument("--discount", type=float, default=0.99, help="Discount factor")
+    parser.add_argument(
+        "--actor_injection",
+        action="store_true",
+        default=False,
+        help="Use actor injection",
+    )
+    parser.add_argument(
+        "--injection_clip",
+        action="store_true",
+        default=False,
+        help="Clip actor vector norm for injection",
+    )
+    parser.add_argument(
+        "--nb_injections",
+        type=int,
+        default=1,
+        help="Number of actors to inject if actor_injection is True",
+    )
+    parser.add_argument(
+        "--critic_training",
+        type=int,
+        default=1000,
+        help="Number of critic training steps",
+    )
+    parser.add_argument(
+        "--pg_training", type=int, default=1000, help="Number of PG training steps"
+    )
+    parser.add_argument(
+        "--actor_lr",
+        type=float,
+        default=3e-4,
+        help="Learning rate for actor Adam optimizer",
+    )
+    parser.add_argument(
+        "--critic_lr",
+        type=float,
+        default=3e-4,
+        help="Learning rate for critic Adam optimizer",
+    )
+    parser.add_argument(
+        "--es_target",
+        action="store_true",
+        default=False,
+        help="Use ES center as critic target",
+    )
+
+    # RL + ES
+    parser.add_argument(
+        "--surrogate", default=False, action="store_true", help="Use surrogate"
+    )
+    parser.add_argument(
+        "--surrogate_batch",
+        type=int,
+        default=1024,
+        help="Number of samples to use for surrogate evaluation",
+    )
+    parser.add_argument(
+        "--surrogate_omega",
+        type=float,
+        default=0.6,
+        help="Probability of using surrogate",
+    )
+    parser.add_argument(
+        "--spearman",
+        default=False,
+        action="store_true",
+        help="Use surrogate with spearman-ajusted probability",
+    )
+    # parser.add_argument('--spearman_decay', type=float, default=1.0, help='Spearman decay')
+
+    # File output
+    parser.add_argument("--output", type=str, default="", help="Output file")
+    parser.add_argument("--plot", default=False, action="store_true", help="Make plots")
+
+    # Wandb
+    parser.add_argument("--wandb", type=str, default="", help="Wandb project name")
+    parser.add_argument("--tag", type=str, default="", help="Project tag")
+    parser.add_argument("--jobid", type=str, default="", help="Job ID")
+
+    # Log period
+    parser.add_argument("--log_period", type=int, default=1, help="Log period")
+
+    # Debug flag
+    parser.add_argument(
+        "--debug", default=False, action="store_true", help="Debug flag"
+    )
+    parser.add_argument(
+        "--logall", default=False, action="store_true", help="Lot at each generation"
+    )
+    return parser
+
+
+def fill_default(args):
+    # Get default arguments from es_parser
+    # If an arg is not in args, add it with the default value
+    # Args and es_args are both from argparse
+    es_parser = get_es_parser()
+    es_args = vars(es_parser.parse_args([]))
+    for key, value in es_args.items():
+        if key not in args:
+            print(f"Adding default argument {key} = {value}")
+            # Add default argument to the namespace
+            setattr(args, key, value)
+
+    return args
+
+
 def setup_es(args):
     print("Imported modules")
 
@@ -98,9 +385,7 @@ def setup_es(args):
     if args.groupsort or args.activation == "sort":
         print("Using groupsort")
         if args.groupsort_k != 1:
-            raise NotImplementedError(
-                "Groupsort with k != 1 not implemented for MLPs"
-            )
+            raise NotImplementedError("Groupsort with k != 1 not implemented for MLPs")
         args.groupsort = True
         args.activation = "sort"
 
@@ -114,7 +399,7 @@ def setup_es(args):
         raise NotImplementedError(
             f"Activation {args.activation} not implemented, choose one of {activations.keys()}"
         )
-    
+
     activation = activations[args.activation]
 
     policy_layer_sizes = args.policy_hidden_layer_sizes + (env.action_size,)
@@ -129,7 +414,7 @@ def setup_es(args):
     print("Policy network", args.policy_network)
     args.critic_network = f"MLP {args.critic_layer_number}x{args.critic_hidden_layer_sizes[0]} relu -> none"
     print("Critic network", args.critic_network)
-    
+
     # Init population of controllers
     random_key, subkey = jax.random.split(random_key)
     keys = jax.random.split(subkey, num=1)
@@ -323,20 +608,36 @@ def setup_es(args):
             policy_delay=2,
             elastic_pull=args.elastic_pull,
             surrogate_batch=args.surrogate_batch,
+            sqrt_gdr=args.sqrtgdr,
         )
 
-        if args.es_target:
-            rl_emitter = ESTargetQualityPGEmitter(
+        if args.trgdr:
+            gdr_config = TRGDRConfig(
+                # TR-GDR params
+                tr_gdr_alpha=0.99,
+                tr_gdr_lambda_lr=1e-3,
+                tr_gdr_scaling=args.es_sigma,
+            )
+
+            rl_emitter = TRGDREmitter(
                 config=rl_config,
+                gdr_config=gdr_config,
                 policy_network=policy_network,
                 env=env,
             )
         else:
-            rl_emitter = CustomQualityPGEmitter(
-                config=rl_config,
-                policy_network=policy_network,
-                env=env,
-            )
+            if args.es_target:
+                rl_emitter = ESTargetQualityPGEmitter(
+                    config=rl_config,
+                    policy_network=policy_network,
+                    env=env,
+                )
+            else:
+                rl_emitter = CustomQualityPGEmitter(
+                    config=rl_config,
+                    policy_network=policy_network,
+                    env=env,
+                )
 
         # ESRL emitter
         esrl_emitter_type = ESRLEmitter
@@ -406,7 +707,7 @@ def setup_es(args):
 
     # print("Initialized ES")
     print(es_emitter)
-    
+
     print(emitter.config_string)
 
     entity = None
@@ -432,269 +733,3 @@ def setup_es(args):
         eval_fn=eval_scoring_fn,
         scoring_fn=eval_scoring_fn,
     )
-
-
-# Setup parser for command-line arguments.
-def get_es_parser():
-    # Argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--env",
-        type=str,
-        default="walker2d_uni",
-        help="Environment name",
-        # choices=['ant_uni', 'hopper_uni', 'walker2d_uni', 'halfcheetah_uni', 'humanoid_uni', 'ant_omni', 'humanoid_omni', 'anttrap'],
-        dest="env_name",
-    )
-    parser.add_argument(
-        "--episode_length", type=int, default=1000, help="Number of steps per episode"
-    )
-    # parser.add_argument('--gen', type=int, default=10000, help='Generations', dest='num_iterations')
-    parser.add_argument("--evals", type=int, default=1000000, help="Evaluations")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-
-    # Networks
-    parser.add_argument(
-        "--policy_hidden_layer_sizes",
-        type=int,
-        default=128,
-        help="Policy network hidden layer sizes",
-    )
-    parser.add_argument(
-        "--policy_layer_number",
-        type=int,
-        default=2,
-        help="Policy network hidden layer number",
-    )
-    parser.add_argument(
-        "--critic_hidden_layer_sizes",
-        type=int,
-        default=128,
-        help="critic network hidden layer sizes",
-    )
-    parser.add_argument(
-        "--critic_layer_number",
-        type=int,
-        default=2,
-        help="Critic network hidden layer number",
-    )
-    parser.add_argument(
-        "--deterministic", default=False, action="store_true", help="Fixed init state"
-    )
-    parser.add_argument(
-        "--groupsort", default=False, action="store_true", help="Groupsort activation function"
-    )
-    parser.add_argument(
-        "--groupsort_k", type=int, default=1, help="Number of groups for groupsort"
-    )
-    # activation
-    parser.add_argument(
-        "--activation",
-        type=str,
-        default="relu",
-        help="Activation function for policy network",
-    )
-
-    # Exploration noise, default 0
-    parser.add_argument(
-        "--explo_noise",
-        type=float,
-        default=0.0,
-        help="Exploration noise (Gaussian)",
-    )
-
-    # Map-Elites
-    parser.add_argument(
-        "--num_init_cvt_samples",
-        type=int,
-        default=50000,
-        help="Number of samples to use for CVT initialization",
-    )
-    parser.add_argument(
-        "--num_centroids", type=int, default=1024, help="Number of centroids"
-    )
-    parser.add_argument(
-        "--min_bd",
-        type=float,
-        default=0.0,
-        help="Minimum value for the behavior descriptor",
-    )
-    parser.add_argument(
-        "--max_bd",
-        type=float,
-        default=1.0,
-        help="Maximum value for the behavior descriptor",
-    )
-
-    # ES
-    # ES type
-    parser.add_argument(
-        "--es",
-        type=str,
-        default="es",
-        help="ES type",
-        choices=["open", "canonical", "cmaes", "random", "multiactor"],
-    )
-    parser.add_argument("--pop", type=int, default=512, help="Population size")
-    parser.add_argument(
-        "--es_sigma",
-        type=float,
-        default=0.01,
-        help="Standard deviation of the Gaussian distribution",
-    )
-    parser.add_argument(
-        "--sample_mirror", type=bool, default=True, help="Mirror sampling in ES"
-    )
-    parser.add_argument(
-        "--sample_rank_norm", type=bool, default=True, help="Rank normalization in ES"
-    )
-    parser.add_argument(
-        "--adam_optimizer",
-        type=bool,
-        default=True,
-        help="Use Adam optimizer instead of SGD",
-    )
-    parser.add_argument(
-        "--learning_rate",
-        type=float,
-        default=0.01,
-        help="Learning rate for ES optimizer",
-    )
-    parser.add_argument(
-        "--l2_coefficient",
-        type=float,
-        default=0.02,
-        help="L2 coefficient for Adam optimizer",
-    )
-
-    # NSES
-    parser.add_argument(
-        "--nses", default=False, action="store_true", help="Use NSES instead of ES"
-    )
-    parser.add_argument(
-        "--novelty_nearest_neighbors",
-        type=int,
-        default=10,
-        help="Number of nearest neighbors to use for novelty computation",
-    )
-
-    # RL
-    parser.add_argument("--rl", default=False, action="store_true", help="Add RL")
-    parser.add_argument(
-        "--testrl", default=False, action="store_true", help="Add RL/ES testing"
-    )
-    parser.add_argument(
-        "--carlies", default=False, action="store_true", help="Add CARLIES"
-    )
-    parser.add_argument(
-        "--elastic_pull",
-        type=float,
-        default=0,
-        help="Penalization for pulling the actor too far from the ES center",
-    )
-    parser.add_argument("--discount", type=float, default=0.99, help="Discount factor")
-    parser.add_argument(
-        "--actor_injection",
-        action="store_true",
-        default=False,
-        help="Use actor injection",
-    )
-    parser.add_argument(
-        "--injection_clip",
-        action="store_true",
-        default=False,
-        help="Clip actor vector norm for injection",
-    )
-    parser.add_argument(
-        "--nb_injections",
-        type=int,
-        default=1,
-        help="Number of actors to inject if actor_injection is True",
-    )
-    parser.add_argument(
-        "--critic_training",
-        type=int,
-        default=1000,
-        help="Number of critic training steps",
-    )
-    parser.add_argument(
-        "--pg_training", type=int, default=1000, help="Number of PG training steps"
-    )
-    parser.add_argument(
-        "--actor_lr",
-        type=float,
-        default=3e-4,
-        help="Learning rate for actor Adam optimizer",
-    )
-    parser.add_argument(
-        "--critic_lr",
-        type=float,
-        default=3e-4,
-        help="Learning rate for critic Adam optimizer",
-    )
-    parser.add_argument(
-        "--es_target",
-        action="store_true",
-        default=False,
-        help="Use ES center as critic target",
-    )
-
-    # RL + ES
-    parser.add_argument(
-        "--surrogate", default=False, action="store_true", help="Use surrogate"
-    )
-    parser.add_argument(
-        "--surrogate_batch",
-        type=int,
-        default=1024,
-        help="Number of samples to use for surrogate evaluation",
-    )
-    parser.add_argument(
-        "--surrogate_omega",
-        type=float,
-        default=0.6,
-        help="Probability of using surrogate",
-    )
-    parser.add_argument(
-        "--spearman",
-        default=False,
-        action="store_true",
-        help="Use surrogate with spearman-ajusted probability",
-    )
-    # parser.add_argument('--spearman_decay', type=float, default=1.0, help='Spearman decay')
-
-    # File output
-    parser.add_argument("--output", type=str, default="", help="Output file")
-    parser.add_argument("--plot", default=False, action="store_true", help="Make plots")
-
-    # Wandb
-    parser.add_argument("--wandb", type=str, default="", help="Wandb project name")
-    parser.add_argument("--tag", type=str, default="", help="Project tag")
-    parser.add_argument("--jobid", type=str, default="", help="Job ID")
-
-    # Log period
-    parser.add_argument("--log_period", type=int, default=1, help="Log period")
-
-    # Debug flag
-    parser.add_argument(
-        "--debug", default=False, action="store_true", help="Debug flag"
-    )
-    parser.add_argument(
-        "--logall", default=False, action="store_true", help="Lot at each generation"
-    )
-    return parser
-
-
-def fill_default(args):
-    # Get default arguments from es_parser
-    # If an arg is not in args, add it with the default value
-    # Args and es_args are both from argparse
-    es_parser = get_es_parser()
-    es_args = vars(es_parser.parse_args([]))
-    for key, value in es_args.items():
-        if key not in args:
-            print(f"Adding default argument {key} = {value}")
-            # Add default argument to the namespace
-            setattr(args, key, value)
-
-    return args

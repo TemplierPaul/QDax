@@ -27,6 +27,9 @@ from qdax.core.emitters.qpg_emitter import (
     QualityPGEmitterState,
     QualityPGEmitter,
 )
+from qdax.core.emitters.tr_gdr_qpg_emitter import (
+    TRGDREmitterState,
+)
 from qdax.core.rl_es_parts.es_utils import ESRepertoire, ESMetrics
 from qdax.core.cmaes import CMAESState
 from jax.flatten_util import ravel_pytree
@@ -440,27 +443,26 @@ class ESRLEmitter(Emitter):
             actor=emitter_state.rl_state.actor_params,
         )
 
-        if self._config.es_config.nses_emitter:
-            surrogate_extra_scores = extra_scores
+        # if self._config.es_config.nses_emitter:
+        #     surrogate_extra_scores = extra_scores
         
-        else:
-
-            # Compute surrogate update
-            surrogate_offspring, _, _, surrogate_extra_scores = self.surrogate_es_emitter(
-                parent=genotypes,
-                optimizer_state=base_optim_state,
-                random_key=random_key,
-                scores_fn=scores,
-                actor=emitter_state.rl_state.actor_params,
-                surrogate_data=emitter_state,
-            )
+        # else:
+        #     # Compute surrogate update
+        #     surrogate_offspring, _, _, surrogate_extra_scores = self.surrogate_es_emitter(
+        #         parent=genotypes,
+        #         optimizer_state=base_optim_state,
+        #         random_key=random_key,
+        #         scores_fn=scores,
+        #         actor=emitter_state.rl_state.actor_params,
+        #         surrogate_data=emitter_state,
+        #     )
 
         random_key = new_random_key
 
-        true_fit = extra_scores["population_fitness"]
-        surr_fit = surrogate_extra_scores["population_fitness"]
+        # true_fit = extra_scores["population_fitness"]
+        # surr_fit = surrogate_extra_scores["population_fitness"]
 
-        corr, pval = spearman(true_fit, surr_fit)
+        # corr, pval = spearman(true_fit, surr_fit)
 
         # Update ES emitter state
         es_state = emitter_state.es_state.replace(
@@ -501,10 +503,16 @@ class ESRLEmitter(Emitter):
             rl_updates=emitter_state.metrics.rl_updates,
         )
 
-        metrics = metrics.replace(
-            spearmans_correlation=corr,
-            spearmans_pvalue=pval,
-        )
+        if isinstance(rl_state, TRGDREmitterState):
+            metrics = metrics.replace(
+                tr_gdr_lambda=rl_state.gdr_state.tr_gdr_lambda,
+                tr_gdr_d=rl_state.gdr_state.tr_gdr_d,
+            )
+
+        # metrics = metrics.replace(
+        #     spearmans_correlation=corr,
+        #     spearmans_pvalue=pval,
+        # )
         # Share random key between ES and RL emitters
 
         state = ESRLEmitterState(es_state, rl_state)
