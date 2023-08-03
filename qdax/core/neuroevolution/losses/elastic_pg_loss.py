@@ -8,6 +8,8 @@ import jax.numpy as jnp
 from qdax.core.neuroevolution.buffers.buffer import Transition
 from qdax.types import Action, Observation, Params, RNGKey
 
+from jax.debug import print as jprint
+
 
 def elastic_td3_loss_fn(
     policy_fn: Callable[[Params, Observation], jnp.ndarray],
@@ -110,6 +112,10 @@ def elastic_td3_loss_fn(
     return _policy_loss_fn, _critic_loss_fn
 
 
+def safe_sqrt(x):
+    return jnp.sqrt(jnp.maximum(x, 1e-8))
+
+
 def sqrt_elastic_td3_loss_fn(
     policy_fn: Callable[[Params, Observation], jnp.ndarray],
     critic_fn: Callable[[Params, Observation, Action], jnp.ndarray],
@@ -156,7 +162,7 @@ def sqrt_elastic_td3_loss_fn(
 
         # L2 regularization on the distance between the actor and the center of an ES
         elastic_loss = jax.tree_util.tree_map(
-            lambda x, y: ((x - y) ** 2) * elastic_pull, policy_params, es_center
+            lambda x, y: ((x - y) ** 2), policy_params, es_center
         )
         # print("Loss - Elastic loss", jax.tree_map(lambda x: x.shape, elastic_loss))
 
@@ -164,7 +170,9 @@ def sqrt_elastic_td3_loss_fn(
         elastic_loss_sum = jax.tree_util.tree_reduce(
             lambda x, y: x.sum() + y.sum(), elastic_loss
         )
-        policy_loss += jnp.sqrt(elastic_loss_sum)  # Make it actually the distance
+
+        dist = safe_sqrt(elastic_loss_sum)
+        policy_loss += dist * elastic_pull
         return policy_loss
 
     @jax.jit

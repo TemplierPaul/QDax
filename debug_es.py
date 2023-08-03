@@ -1,4 +1,5 @@
 import os
+import jax
 
 try:
     os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"]
@@ -7,6 +8,8 @@ except KeyError:
 print("XLA memory", os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"])
 
 from qdax.core.rl_es_parts.es_setup import setup_es, get_es_parser
+
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 
 def main(args):
@@ -39,7 +42,7 @@ def main(args):
             "critic_hidden_layer_sizes": 16,
             "output": "debug",
             "surrogate_batch": 10,
-            "pg_training": 20,
+            "pg_training": 3,
             "critic_training": 10,
         }
         for k, v in debug_values.items():
@@ -204,6 +207,8 @@ def main(args):
 
             csv_logger.log(logged_metrics)
             if wandb_run:
+                print("Wandb logging")
+                print(logged_metrics)
                 wandb_run.log(logged_metrics)
 
             if args.logall and args.output != "":
@@ -233,68 +238,72 @@ def main(args):
     for k, v in logged_metrics.items():
         print(f"{k}: {v}")
 
-    #################
-    # Visualisation #
+    # #################
+    # # Visualisation #
 
-    import wandb
+    # import wandb
 
-    if args.plot:
-        # create the x-axis array
-        env_steps = jnp.arange(logged_metrics["evaluations"]) * args.episode_length
+    # if args.plot:
+    #     # create the x-axis array
+    #     env_steps = jnp.arange(logged_metrics["evaluations"]) * args.episode_length
 
-        # Check the number of dimensions of the descriptors
-        if len(repertoire.descriptors.shape) == 2:
-            # create the plots and the grid
-            try:
-                fig, axes = plot_map_elites_results(
-                    env_steps=env_steps,
-                    metrics=all_metrics,
-                    repertoire=repertoire,
-                    min_bd=args.min_bd,
-                    max_bd=args.max_bd,
-                )
+    #     # Check the number of dimensions of the descriptors
+    #     if len(repertoire.descriptors.shape) == 2:
+    #         # create the plots and the grid
+    #         try:
+    #             fig, axes = plot_map_elites_results(
+    #                 env_steps=env_steps,
+    #                 metrics=all_metrics,
+    #                 repertoire=repertoire,
+    #                 min_bd=args.min_bd,
+    #                 max_bd=args.max_bd,
+    #             )
 
-                import matplotlib.pyplot as plt
+    #             import matplotlib.pyplot as plt
 
-                plt.savefig(plot_file)
+    #             plt.savefig(plot_file)
 
-            except ValueError:
-                print("Error plotting results")
+    #         except ValueError:
+    #             print("Error plotting results")
 
-            # Log the repertoire plot
-            if wandb_run:
-                try:
-                    from qdax.utils.plotting import plot_2d_map_elites_repertoire
+    #         # Log the repertoire plot
+    #         if wandb_run:
+    #             try:
+    #                 from qdax.utils.plotting import plot_2d_map_elites_repertoire
 
-                    fig, ax = plot_2d_map_elites_repertoire(
-                        centroids=repertoire.centroids,
-                        repertoire_fitnesses=repertoire.fitnesses,
-                        minval=args.min_bd,
-                        maxval=args.max_bd,
-                        repertoire_descriptors=repertoire.descriptors,
-                    )
-                    wandb_run.log({"archive": wandb.Image(fig)})
-                except Exception:
-                    print("Error plotting repertoire")
+    #                 fig, ax = plot_2d_map_elites_repertoire(
+    #                     centroids=repertoire.centroids,
+    #                     repertoire_fitnesses=repertoire.fitnesses,
+    #                     minval=args.min_bd,
+    #                     maxval=args.max_bd,
+    #                     repertoire_descriptors=repertoire.descriptors,
+    #                 )
+    #                 wandb_run.log({"archive": wandb.Image(fig)})
+    #             except Exception:
+    #                 print("Error plotting repertoire")
 
-        try:
-            html_content = repertoire.record_video(env, policy_network)
-            video_file = plot_file.replace(".png", ".html")
-            with open(video_file, "w") as file:
-                file.write(html_content)
-            # Log the plot
-            if wandb_run:
-                wandb_run.log({"best_agent": wandb.Html(html_content)})
-                wandb.finish()
+    #     try:
+    #         html_content = repertoire.record_video(env, policy_network)
+    #         video_file = plot_file.replace(".png", ".html")
+    #         with open(video_file, "w") as file:
+    #             file.write(html_content)
+    #         # Log the plot
+    #         if wandb_run:
+    #             wandb_run.log({"best_agent": wandb.Html(html_content)})
+    #             wandb.finish()
 
-        except Exception:
-            print("Error recording video")
+    #     except Exception:
+    #         print("Error recording video")
 
 
 if __name__ == "__main__":
     parser = get_es_parser()
 
-    # parse arguments
-    args = parser.parse_args()
-
+    command = "--debug --es=canonical"  # --wandb=sureli/qdax_debug --tag=debug_wandb"
+    command += " --elastic_pull=0.01 --sqrtgdr --testrl --actor_injection"
+    # command += " --testrl --actor_injection"
+    print("DEBUG COMMAND:", command)
+    # Parse it
+    args = parser.parse_args(command.split())
+    # with jax.disable_jit():
     main(args)
