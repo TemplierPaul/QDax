@@ -238,7 +238,8 @@ def main(args):
 
     import wandb
 
-    if args.plot:
+    # if args.plot:
+    if False:
         # create the x-axis array
         env_steps = jnp.arange(logged_metrics["evaluations"]) * args.episode_length
 
