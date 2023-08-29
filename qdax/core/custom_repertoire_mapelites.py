@@ -36,7 +36,7 @@ class CustomMAPElites(MAPElites):
         self.repertoire_type = repertoire_type
 
 
-    @partial(jax.jit, static_argnames=("self",))
+    # @partial(jax.jit, static_argnames=("self",))
     def init(
         self,
         init_genotypes: Genotype,

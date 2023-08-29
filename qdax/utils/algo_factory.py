@@ -70,7 +70,7 @@ class MEFactory:
         return self.__repr__()
 
     def reset(self):
-        print("Resetting MEFactory")
+        print(f"Resetting {self}")
         self.end_repertoire = None
         self.metrics = None
 
@@ -158,11 +158,12 @@ class MEFactory:
         )
 
         # Get minimum reward value to make sure qd_score are positive
-        reward_offset = environments.reward_offset[self.config["env_name"]]
+        self.reward_offset = environments.reward_offset[self.config["env_name"]]
+        self.qd_offset = self.reward_offset * self.config["episode_length"]
 
         metrics_function = functools.partial(
             count_qd_metrics,
-            qd_offset=reward_offset * self.config["episode_length"],
+            qd_offset=self.qd_offset,
         )
 
         # Compute the centroids

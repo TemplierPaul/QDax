@@ -45,8 +45,6 @@ def elastic_td3_loss_fn(
         es_center: Params,
     ) -> jnp.ndarray:
         """Policy loss function for TD3 agent"""
-        # print("Loss - Actor", jax.tree_map(lambda x: x.shape, policy_params))
-        # print("Loss - ES", jax.tree_map(lambda x: x.shape, es_center))
 
         action = policy_fn(policy_params, transitions.obs)
         q_value = critic_fn(
@@ -59,7 +57,6 @@ def elastic_td3_loss_fn(
         elastic_loss = jax.tree_util.tree_map(
             lambda x, y: ((x - y) ** 2) * elastic_pull, policy_params, es_center
         )
-        # print("Loss - Elastic loss", jax.tree_map(lambda x: x.shape, elastic_loss))
 
         # Sum it
         elastic_loss_sum = jax.tree_util.tree_reduce(

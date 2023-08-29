@@ -1,19 +1,30 @@
-import jax 
+import jax
 import jax.numpy as jnp
 
 import matplotlib.pyplot as plt
+
 
 # Pareto front
 def pareto_front(points, f1, f2):
     def is_dominated(x):
         """Check if a point is dominated."""
         return jnp.any((f1 > x[0]) & (f2 > x[1]))
+
     # zip f1 and f2
     f = jnp.vstack([f1, f2]).T
     dominated = jax.vmap(is_dominated)(f)
     return points[~dominated]
 
-def get_pareto(points, opt_posterior, train_data, bounds, n_points=100, plot=False, return_front=False):
+
+def get_pareto(
+    points,
+    opt_posterior,
+    train_data,
+    bounds,
+    n_points=100,
+    plot=False,
+    return_front=False,
+):
     points = points.astype(jnp.float64)
     rng = jax.random.PRNGKey(0)
     # minval = jnp.array([bounds[0][0], bounds[1][0]])
@@ -40,20 +51,26 @@ def get_pareto(points, opt_posterior, train_data, bounds, n_points=100, plot=Fal
 
     # Sample from the Pareto front
     if len(pf_indices) > n_points:
-        selected_indices = jax.random.choice(rng, pf_indices, shape=(n_points,), replace=False)
+        selected_indices = jax.random.choice(
+            rng, pf_indices, shape=(n_points,), replace=False
+        )
     elif len(pf_indices) == n_points:
         selected_indices = pf_indices
     else:
         # Complete with random other points
         n_random = n_points - len(pf_indices)
         # randomly select indices
-        random_indices = jax.random.choice(rng, indices, shape=(n_random,), replace=False)
-        print(pf_indices.shape, random_indices.shape)
-        # concatenate 
-        selected_indices = jnp.vstack([pf_indices.reshape(-1, 1), random_indices.reshape(-1, 1)]).reshape(-1)
+        random_indices = jax.random.choice(
+            rng, indices, shape=(n_random,), replace=False
+        )
+        # print(pf_indices.shape, random_indices.shape)
+        # concatenate
+        selected_indices = jnp.vstack(
+            [pf_indices.reshape(-1, 1), random_indices.reshape(-1, 1)]
+        ).reshape(-1)
         # selected_indices = jnp.vstack([pf_indices, random_indices])
-        print(selected_indices.shape)
-        
+        # print(selected_indices.shape)
+
     if plot:
         # plot pareto front
         pareto_mean = predictive_mean[pf_indices]
@@ -70,45 +87,103 @@ def get_pareto(points, opt_posterior, train_data, bounds, n_points=100, plot=Fal
             # Complete with random other points
             n_random = n_points - len(pf_indices)
             # randomly select indices
-            random_indices = jax.random.choice(rng, indices, shape=(n_random,), replace=False)
-            print(pf_indices.shape, random_indices.shape)
-            # concatenate 
-            selected_indices = jnp.vstack([pf_indices.reshape(-1, 1), random_indices.reshape(-1, 1)]).reshape(-1)
+            random_indices = jax.random.choice(
+                rng, indices, shape=(n_random,), replace=False
+            )
+            # print(pf_indices.shape, random_indices.shape)
+            # concatenate
+            selected_indices = jnp.vstack(
+                [pf_indices.reshape(-1, 1), random_indices.reshape(-1, 1)]
+            ).reshape(-1)
         else:
             selected_indices = pf_indices
         return points[selected_indices]
 
     pf_points = points[selected_indices].astype(jnp.float32)
     return pf_points
-    
-def random_pareto(opt_posterior, train_data, bounds, n_points=100, n_samples=1000, plot=False, return_front=False):
+
+
+def random_pareto(
+    opt_posterior,
+    train_data,
+    bounds,
+    n_points=100,
+    n_samples=1000,
+    plot=False,
+    return_front=False,
+):
     rng = jax.random.PRNGKey(0)
     minval = jnp.array([bounds[0][0], bounds[1][0]])
     maxval = jnp.array([bounds[0][1], bounds[1][1]])
     points = jax.random.uniform(rng, (n_samples, 2), minval=minval, maxval=maxval)
-    return get_pareto(points, opt_posterior, train_data, bounds, n_points=n_points, plot=plot, return_front=return_front)
+    return get_pareto(
+        points,
+        opt_posterior,
+        train_data,
+        bounds,
+        n_points=n_points,
+        plot=plot,
+        return_front=return_front,
+    )
 
-def centroids_pareto(repertoire, opt_posterior, train_data, bounds, n_points=100, plot=False, return_front=False):
-    return get_pareto(repertoire.centroids, opt_posterior, train_data, bounds, n_points=n_points, plot=plot, return_front=return_front)
-        
-def archive_pareto(repertoire, opt_posterior, train_data, bounds, n_points=100, plot=False, return_front=False):
+
+def centroids_pareto(
+    repertoire,
+    opt_posterior,
+    train_data,
+    bounds,
+    n_points=100,
+    plot=False,
+    return_front=False,
+):
+    return get_pareto(
+        repertoire.centroids,
+        opt_posterior,
+        train_data,
+        bounds,
+        n_points=n_points,
+        plot=plot,
+        return_front=return_front,
+    )
+
+
+def archive_pareto(
+    repertoire,
+    opt_posterior,
+    train_data,
+    bounds,
+    n_points=100,
+    plot=False,
+    return_front=False,
+):
     is_empty = repertoire.fitnesses == -jnp.inf
     archive = repertoire.centroids[~is_empty]
-    return get_pareto(archive, opt_posterior, train_data, bounds, n_points=n_points, plot=plot, return_front=return_front)
+    return get_pareto(
+        archive,
+        opt_posterior,
+        train_data,
+        bounds,
+        n_points=n_points,
+        plot=plot,
+        return_front=return_front,
+    )
+
 
 # Compute pair-wise distances
 def dist(x1, x2):
     return jnp.sqrt(jnp.sum((x1 - x2) ** 2))
 
+
 def dist_matrix(points):
     # Compute the distance matrix using vmap
     return jax.vmap(lambda x: jax.vmap(lambda y: dist(x, y))(points))(points)
+
 
 # Crowded wrapper
 def crowded(func):
     def wrapped(*args, **kwargs):
         # print("Wow it's crowded in here")
-        kwargs["return_front"]=True
+        kwargs["return_front"] = True
         front = func(*args, **kwargs)
         # shuffle front
         rng = jax.random.PRNGKey(0)
@@ -123,10 +198,12 @@ def crowded(func):
         d = jnp.min(d, axis=1)
         # print(d)
         # Get top 10 points
-        top_indices = jnp.argsort(d)[:kwargs["n_points"]]
+        top_indices = jnp.argsort(d)[: kwargs["n_points"]]
         top_points = front[top_indices]
         return top_points
+
     return wrapped
+
 
 crowded_centroids_pareto = crowded(centroids_pareto)
 crowded_archive_pareto = crowded(archive_pareto)

@@ -4,11 +4,12 @@ from qdax.tasks.brax_envs import (
 )
 from qdax.core.rl_es_parts.canonical_es import CanonicalESConfig, CanonicalESEmitter
 
-import jax 
+import jax
 import jax.numpy as jnp
 import functools
 
 from qdax import environments
+
 
 class BaseES:
     def __init__(self, env, config):
@@ -17,8 +18,11 @@ class BaseES:
 
         self.env = env
 
-    def init(self, policy_network):
+    @property
+    def name(self):
+        return "BaseES"
 
+    def init(self, policy_network):
         random_key, subkey = jax.random.split(self.random_key)
         keys = jax.random.split(subkey, num=1)
         fake_batch = jnp.zeros(shape=(1, self.env.observation_size))
@@ -27,7 +31,9 @@ class BaseES:
         play_reset_fn = self.env.reset
 
         # Prepare the scoring function
-        bd_extraction_fn = environments.behavior_descriptor_extractor[self.config["env_name"]]
+        bd_extraction_fn = environments.behavior_descriptor_extractor[
+            self.config["env_name"]
+        ]
 
         play_step_fn = make_policy_network_play_step_fn_brax(self.env, policy_network)
 
@@ -66,7 +72,7 @@ class BaseES:
 
     def scan_step(self, carry, unused):
         raise NotImplementedError
-        
+
     def step(self, start, target_bd, es_emitter_state, random_key, n_steps=1):
         (offspring, target_bd, es_emitter_state, random_key), metrics = jax.lax.scan(
             self.scan_step,
@@ -77,34 +83,43 @@ class BaseES:
         # Remove the batch dimension
         metrics = jax.tree_map(lambda x: x.squeeze(), metrics)
         return offspring, metrics, es_emitter_state, random_key
-    
+
     def evaluate(self, genotype, random_key):
-        offspring_fitnesses, offspring_descriptors, extra_scores, random_key = self.emitter._rollout_fn(
-                genotype,
-                random_key
-            )
+        (
+            offspring_fitnesses,
+            offspring_descriptors,
+            extra_scores,
+            random_key,
+        ) = self.emitter._rollout_fn(genotype, random_key)
         return offspring_fitnesses, offspring_descriptors, extra_scores, random_key
-        
+
 
 class BD_ES(BaseES):
+    @property
+    def name(self):
+        return "BD_ES"
+
     def scan_step(self, carry, unused):
         start, target_bd, es_emitter_state, random_key = carry
+
         @jax.jit
         def bd_scores_fn(fitnesses, descriptors) -> jnp.ndarray:
             # minimize distance to target_bd
-            return  - jnp.linalg.norm(descriptors - target_bd, axis=1)
+            return -jnp.linalg.norm(descriptors - target_bd, axis=1)
 
         offspring, optimizer_state, random_key, extra_scores = self.emitter._es_emitter(
-            parent = start,
-            random_key = random_key,
-            scores_fn = bd_scores_fn,
-            optimizer_state=es_emitter_state.optimizer_state
+            parent=start,
+            random_key=random_key,
+            scores_fn=bd_scores_fn,
+            optimizer_state=es_emitter_state.optimizer_state,
         )
         # evaluate offspring
-        offspring_fitnesses, offspring_descriptors, offspring_extra_scores, random_key = self.emitter._rollout_fn(
-            offspring,
-            random_key
-        )
+        (
+            offspring_fitnesses,
+            offspring_descriptors,
+            offspring_extra_scores,
+            random_key,
+        ) = self.emitter._rollout_fn(offspring, random_key)
 
         metrics = {
             "genotype": offspring,
@@ -115,31 +130,37 @@ class BD_ES(BaseES):
             "population_networks": extra_scores["population_networks"],
         }
 
-        es_emitter_state = es_emitter_state.replace(
-            optimizer_state=optimizer_state
-        )
+        es_emitter_state = es_emitter_state.replace(optimizer_state=optimizer_state)
 
         return (offspring, target_bd, es_emitter_state, random_key), metrics
+
 
 class Fitness_ES(BaseES):
+    @property
+    def name(self):
+        return "Fitness_ES"
+
     def scan_step(self, carry, unused):
         start, target_bd, es_emitter_state, random_key = carry
+
         @jax.jit
         def bd_scores_fn(fitnesses, descriptors) -> jnp.ndarray:
             # minimize distance to target_bd
-            return  fitnesses
+            return fitnesses
 
         offspring, optimizer_state, random_key, extra_scores = self.emitter._es_emitter(
-            parent = start,
-            random_key = random_key,
-            scores_fn = bd_scores_fn,
-            optimizer_state=es_emitter_state.optimizer_state
+            parent=start,
+            random_key=random_key,
+            scores_fn=bd_scores_fn,
+            optimizer_state=es_emitter_state.optimizer_state,
         )
         # evaluate offspring
-        offspring_fitnesses, offspring_descriptors, offspring_extra_scores, random_key = self.emitter._rollout_fn(
-            offspring,
-            random_key
-        )
+        (
+            offspring_fitnesses,
+            offspring_descriptors,
+            offspring_extra_scores,
+            random_key,
+        ) = self.emitter._rollout_fn(offspring, random_key)
 
         metrics = {
             "genotype": offspring,
@@ -150,9 +171,6 @@ class Fitness_ES(BaseES):
             "population_networks": extra_scores["population_networks"],
         }
 
-        es_emitter_state = es_emitter_state.replace(
-            optimizer_state=optimizer_state
-        )
+        es_emitter_state = es_emitter_state.replace(optimizer_state=optimizer_state)
 
         return (offspring, target_bd, es_emitter_state, random_key), metrics
-        

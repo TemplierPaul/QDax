@@ -21,25 +21,45 @@ parser.add_argument('--num_centroids', type=int, default=1024, help='Number of c
 parser.add_argument('--min_bd', type=float, default=0.0, help='Minimum value for the behavior descriptor')
 parser.add_argument('--max_bd', type=float, default=1.0, help='Maximum value for the behavior descriptor')
 
-# ES
-# ES type
-parser.add_argument('--es', type=str, default='open', help='ES type', choices=['open', 'canonical', 'cmaes'])
-parser.add_argument('--pop', type=int, default=512, help='Population size')
-parser.add_argument('--es_sigma', type=float, default=0.01, help='Standard deviation of the Gaussian distribution')
-parser.add_argument('--sample_mirror', type=bool, default=True, help='Mirror sampling in ES')
-parser.add_argument('--sample_rank_norm', type=bool, default=True, help='Rank normalization in ES')
-parser.add_argument('--adam_optimizer', type=bool, default=True, help='Use Adam optimizer instead of SGD')
-parser.add_argument('--learning_rate', type=float, default=0.01, help='Learning rate for Adam optimizer')
-parser.add_argument('--l2_coefficient', type=float, default=0.02, help='L2 coefficient for Adam optimizer')
-
-# NSES
-parser.add_argument('--nses_emitter', type=bool, default=False, help='Use NSES instead of ES')
-parser.add_argument('--novelty_nearest_neighbors', type=int, default=10, help='Number of nearest neighbors to use for novelty computation')
-
 # RL
-parser.add_argument('--rl', default=False, action="store_true", help='Add RL')
-parser.add_argument('--actor_injection', action="store_true", default=False, help='Use actor injection')
-parser.add_argument('--carlies', default=False, action="store_true", help='Add CARLIES')
+parser.add_argument("--rl", default=False, action="store_true", help="Add RL")
+parser.add_argument(
+    "--testrl", default=False, action="store_true", help="Add RL/ES testing"
+)
+parser.add_argument(
+    "--elastic_pull",
+    type=float,
+    default=0,
+    help="Penalization for pulling the actor too far from the ES center",
+)
+parser.add_argument(
+    "--actor_injection",
+    action="store_true",
+    default=False,
+    help="Use actor injection",
+)
+parser.add_argument(
+    "--critic_training",
+    type=int,
+    default=1000,
+    help="Number of critic training steps",
+)
+parser.add_argument(
+    "--pg_training", type=int, default=1000, help="Number of PG training steps"
+)
+parser.add_argument(
+    "--actor_lr",
+    type=float,
+    default=3e-4,
+    help="Learning rate for actor Adam optimizer",
+)
+parser.add_argument(
+    "--critic_lr",
+    type=float,
+    default=3e-4,
+    help="Learning rate for critic Adam optimizer",
+)
+
 
 # File output
 parser.add_argument('--output', type=str, default='output', help='Output file')

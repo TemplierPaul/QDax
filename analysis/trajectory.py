@@ -361,7 +361,6 @@ class StepPathPCA(PathPCA):
         self.paths = paths
         self.env_name = env_name
 
-        self.center = self.paths[0].export_genomes()[-1]
 
         if max_gens is not None:
             self.genomes = jnp.concatenate(
@@ -369,6 +368,7 @@ class StepPathPCA(PathPCA):
             )
         else:
             self.genomes = jnp.concatenate([p.export_genomes() for p in paths])
+        self.center = self.paths[0].export_genomes()[:max_gens][-1]
 
         all_dims = max(dims) if dims is not None else 10
         # print("Dims", dims, "All dims", all_dims)
@@ -394,6 +394,16 @@ class StepPathPCA(PathPCA):
 
         self.genomes = jnp.concatenate([p.export_genomes() for p in paths])
         self.total_variance = self.pca.all_pca_ratios(self.genomes, dims=dims)
+
+        # self.sliding_variance = None
+        # if max_gens > all_dims:
+        #     sliding_gens = min(0, max_gens-100)
+        #     sliding_genomes = np.concatenate(
+        #         [p.export_genomes()[sliding_gens : max_gens] for p in paths]
+        #     )
+        #     sliding_pca = MyPCA(2, all_dim=all_dims)
+        #     sliding_pca.fit(sliding_genomes, self.center)
+        #     self.sliding_variance = sliding_pca.all_pca_ratios(close_genomes, dims=dims)
 
         proj = [p.transform(self.pca) for p in paths]
         proj = jnp.concatenate(proj)

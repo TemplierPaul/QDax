@@ -1,6 +1,6 @@
 # Summarize this section into a function that takes a repertoire and returns a GP
 # Add a function for 2d plotting
-import jax 
+import jax
 import jax.numpy as jnp
 from jax import jit
 import optax as ox
@@ -13,6 +13,7 @@ from qdax.jedi.plotting import add_maze
 # import partial
 from functools import partial
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 
 def fit_GP(repertoire, num_iters=1000):
     """Fit a GP to a repertoire."""
@@ -58,7 +59,16 @@ def fit_GP(repertoire, num_iters=1000):
     return opt_posterior, D
 
 
-def plot_GP(repertoire, opt_posterior, grid_size=30, plot_std=False, larger=True, maze=False, min_bd=-1, max_bd=1):
+def plot_GP(
+    repertoire,
+    opt_posterior,
+    grid_size=30,
+    # plot_std=False,
+    larger=True,
+    maze=False,
+    min_bd=-1,
+    max_bd=1,
+):
     """Plot a GP on a grid."""
     # Remove empty points
     is_empty = repertoire.fitnesses == -jnp.inf
@@ -83,28 +93,31 @@ def plot_GP(repertoire, opt_posterior, grid_size=30, plot_std=False, larger=True
 
     # plot contour
     fig, ax = plt.subplots(figsize=(5, 5))
-    im = plt.contourf(X1, X2, predictive_mean.reshape(grid_size, grid_size), cmap="coolwarm")
+    im = plt.contourf(
+        X1, X2, predictive_mean.reshape(grid_size, grid_size), cmap="coolwarm"
+    )
     plt.scatter(bd[:, 0], bd[:, 1], c=fitness, cmap="viridis", s=1)
     if maze:
         ax = add_maze(ax)
-    
+
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
     cbar = fig.colorbar(im, cax=cax)
-    cbar.set_label('Fitness')
+    cbar.set_label("Fitness")
 
     # plt.title("Mean")
 
-    if plot_std:
-        # plot contour
-        fig, std_ax = plt.subplots(figsize=(5, 5))
-        plt.contourf(X1, X2, predictive_std.reshape(grid_size, grid_size), cmap="coolwarm")
-        plt.colorbar()
-        plt.scatter(bd[:, 0], bd[:, 1], c=fitness, cmap="viridis", s=1)
-        if maze:
-            std_ax = add_maze(std_ax)
-        plt.title("Std")
-        ax = [ax, std_ax]
-    
-    return ax
+    # if plot_std:
+    #     # plot contour
+    #     fig, std_ax = plt.subplots(figsize=(5, 5))
+    #     plt.contourf(
+    #         X1, X2, predictive_std.reshape(grid_size, grid_size), cmap="coolwarm"
+    #     )
+    #     plt.colorbar()
+    #     plt.scatter(bd[:, 0], bd[:, 1], c=fitness, cmap="viridis", s=1)
+    #     if maze:
+    #         std_ax = add_maze(std_ax)
+    #     plt.title("Std")
+    #     ax = [ax, std_ax]
 
+    return fig, ax

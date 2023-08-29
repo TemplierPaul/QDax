@@ -1,7 +1,8 @@
-import jax 
+import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
-from qdax.jedi.evolution_strategies.aria_es import MixedES
+from qdax.jedi.evolution_strategies.aria_es import ARIA_ES
+
 
 def closest_genotype(repertoire, target_bd):
     is_empty = repertoire.fitnesses == -jnp.inf
@@ -16,8 +17,10 @@ def closest_genotype(repertoire, target_bd):
 
     return start_genome, start_bd
 
+
 def stochastic_closest(repertoire, target_bd, top_n=5):
     raise NotImplementedError("TODO")
+
 
 def aim_for(target, repertoire, es, config, base_es_emitter_state, random_key):
     target = jnp.array(target).astype(jnp.float32)
@@ -31,7 +34,7 @@ def aim_for(target, repertoire, es, config, base_es_emitter_state, random_key):
     # print(net_shape(start))
 
     # Run ES
-    if isinstance(es, MixedES):
+    if isinstance(es, ARIA_ES):
         final_offspring, metrics, es_emitter_state, random_key = es.step(
             repertoire,
             start,

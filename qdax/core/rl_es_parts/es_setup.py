@@ -214,7 +214,7 @@ def get_es_parser():
         "--l2_coefficient",
         type=float,
         default=0.02,
-        help="L2 coefficient for Adam optimizer",
+        help="L2 coefficient for OpenAI Adam optimizer",
     )
 
     # NSES
