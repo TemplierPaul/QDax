@@ -64,11 +64,15 @@ class Path:
         self.projected = pca.transform(genomes)
         return self.projected
 
-    def plot(self, ax, c):
+    def plot(self, ax, c, max_gen=None):
         if self.projected is None:
             raise ValueError("No projection computed")
-        ax.plot(self.projected[:, 0], self.projected[:, 1], label=self.name, c=c)
-        ax.scatter(self.projected[-1, 0], self.projected[-1, 1], marker="x", c=c)
+        proj = self.projected
+        if max_gen is not None:
+            keep_gens = [g for g in self.gens if g <= max_gen]
+            proj = proj[: len(keep_gens)]
+        ax.plot(proj[:, 0], proj[:, 1], label=self.name, c=c)
+        ax.scatter(proj[-1, 0], proj[-1, 1], marker="x", c=c)
 
     def evaluate(self, unflatten_fn, scoring_fn, key):
         genomes = self.export_genomes()
@@ -87,6 +91,8 @@ from sklearn.decomposition import PCA
 import plotly.graph_objs as go
 import numpy as np
 import plotly.offline as pyo
+
+colors = ["orange", "pink"]
 
 
 class PathPCA:
@@ -152,8 +158,8 @@ class PathPCA:
             p.evaluate(unflatten_fn, scoring_fn, key)
         return self.true_fit
 
-    def plot(self, save=None):
-        plt.figure(figsize=(20, 10))
+    def plot(self, save=None, max_gen=None):
+        fig, axes = plt.subplots(1, 2, figsize=(20, 10))
         if self.samples is not None:
             if self.true_fit is None:
                 raise ValueError("No fitness computed")
@@ -163,14 +169,29 @@ class PathPCA:
             y = self.samples[:, 1]
             y_grid = y.reshape((n_points, n_points))
             z_grid = self.true_fit.reshape((n_points, n_points))
-            plt.contourf(x_grid, y_grid, z_grid, 20, cmap="viridis")
-            plt.colorbar()
+            contour = axes[0].contourf(
+                x_grid, y_grid, z_grid, 20, cmap="viridis", alpha=0.5
+            )
+            fig.colorbar(contour, location="left", use_gridspec=True)
         colors = ["r", "g", "y", "m", "c", "k"]
+        colors = ["orange", "grey"]
         for p, c in zip(self.paths, colors):
-            p.plot(plt.gca(), c)
-        plt.legend()
-        plt.xlabel(f"PC1 - {self.pca.explained_variance_ratio_[0]:.2f}")
-        plt.ylabel(f"PC2 - {self.pca.explained_variance_ratio_[1]:.2f}")
+            p.plot(axes[0], c, max_gen=max_gen)
+            gens = [g for g in p.gens if g <= max_gen]
+            fit = p.fitnesses[: len(gens)]
+            axes[1].plot(gens, fit, label=p.name, c=c)[0]
+            # x_axis max
+            axes[1].set_xlim(0, max(p.gens))
+        # Start point
+        axes[0].scatter(p.projected[0, 0], p.projected[0, 1], c="r", label="Start")
+        axes[0].legend()
+        axes[0].set_xlabel(f"PC1 - {self.pca.explained_variance_ratio_[0]:.2f}")
+        axes[0].set_ylabel(f"PC2 - {self.pca.explained_variance_ratio_[1]:.2f}")
+
+        axes[1].set_xlabel("Generation")
+        axes[1].set_ylabel("Fitness")
+        axes[1].set_title("Fitness")
+
         if save is not None:
             plt.savefig(save)
 
@@ -361,7 +382,6 @@ class StepPathPCA(PathPCA):
         self.paths = paths
         self.env_name = env_name
 
-
         if max_gens is not None:
             self.genomes = jnp.concatenate(
                 [p.export_genomes()[:max_gens] for p in paths]
@@ -448,6 +468,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "save_path", type=str, help="Path to the folder containing the config.json"
     )
+    parser.add_argument("--max_gens", type=int, default=1000)
     # arg dx: float = 0.5
     parser.add_argument("--dx", type=float, default=0.5, help="dx")
     plot_args = parser.parse_args()
@@ -512,7 +533,7 @@ if __name__ == "__main__":
 
     if rl:
         paths = [
-            ["Actor"],
+            # ["Actor"],
             ["ES", "Actor"],
         ]
         unflatten_fn = jax.vmap(emitter.es_emitter.unflatten)
@@ -522,7 +543,10 @@ if __name__ == "__main__":
     for path in paths:
         print(path)
         pca = StepPathPCA(
-            [Path(path_names[p], name=p) for p in path], env_name=args.env_name
+            [Path(path_names[p], name=p) for p in path],
+            env_name=args.env_name,
+            max_gens=1000,
+            # max_gens=plot_args.max_gens,
         )
 
         print("_".join([p.name for p in pca.paths]))
@@ -533,13 +557,16 @@ if __name__ == "__main__":
         pca.fitness_grid(unflatten_fn, scoring_fn, random_key)
 
         # 3D
-        save = save_path + f"/3dpath_{'_'.join([p.name for p in pca.paths])}.html"
-        pca.plot_3d(save=save)
+        # save = save_path + f"/3dpath_{'_'.join([p.name for p in pca.paths])}.html"
+        # pca.plot_3d(save=save)
 
         # 2D
-        save = save_path + f"/2dpath_{'_'.join([p.name for p in pca.paths])}.png"
-        pca.plot(save=save)
+        save = (
+            save_path
+            + f"/2dpath_{'_'.join([p.name for p in pca.paths])}_{plot_args.max_gens}.png"
+        )
+        pca.plot(save=save, max_gen=plot_args.max_gens)
 
         # GIF
-        save = save_path + f"/animated_path_{'_'.join([p.name for p in pca.paths])}.gif"
-        pca.make_gif(save=save)
+        # save = save_path + f"/animated_path_{'_'.join([p.name for p in pca.paths])}.gif"
+        # pca.make_gif(save=save)

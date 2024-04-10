@@ -4,9 +4,14 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import json
 
+
 from qdax.core.rl_es_parts.es_setup import setup_es, fill_default
 
 import argparse
+
+
+# Make legent font size bigger
+plt.rcParams.update({"font.size": 30})
 
 
 def net_shape(net):
@@ -489,6 +494,135 @@ def stability_plot(save_path, gen, sigma, injection):
     # plt.show()
 
 
+def stability_subplots(save_path, gen, sigma, injection):
+    config = f"gen {gen} | \u03C3={sigma}"
+    if injection:
+        config += " | Injection"
+    if args.deterministic:
+        config += " | Deterministic"
+    else:
+        config += " | Stochastic"
+    print(f"Running {config}")
+
+    offspring_genes = jnp.load(f"{save_path}/gen_{gen}_offspring.npy")
+    offspring = emitter.es_emitter.unflatten(offspring_genes)
+
+    actor_genes = jnp.load(f"{save_path}/gen_{gen}_actor.npy")
+    actor = emitter.es_emitter.unflatten(actor_genes)
+
+    alphas, results, fitnesses = stability_interpolate(
+        offspring,
+        actor,
+        n_points=100,
+        sample_size=100,
+        sigma=sigma,
+        EM=EM,
+        injection=injection,
+        batch_size=10,
+    )
+    # Make subplots in separate figures and save them
+
+    # Update component plot
+    update_comp = results["update_comp"]
+    fig, ax = plt.subplots(1, 1, figsize=(20, 10))
+    ax.plot(alphas, update_comp)
+    ax.scatter(alphas, update_comp, label="Update direction")
+    ax.axvline(x=0, color="red")
+    ax.axvline(x=1, color="green")
+    ax.axhline(y=0, color="black", linestyle="dotted", label="Stability")
+    ax.legend()
+    ax.set_xlabel("Alpha")
+    ax.set_ylabel("Update component")
+    title = f"Update component along interpolation"
+    ax.set_title(title)
+    # config_string = config.replace("| ", "_").replace(" ", "_") + "_update"
+    config_string = f"stability_gen_{gen}"
+    if injection:
+        config_string += "_injection"
+    config_string += "_update"
+    plt.savefig(f"{save_path}/stability_{config_string}.png")
+
+    # Fitness plot
+    # fitnesses = results["fitnesses"]
+    fig, ax = plt.subplots(1, 1, figsize=(20, 10))
+    ax.plot(alphas, fitnesses)
+    ax.scatter(alphas, fitnesses, label="Fitness")
+
+    pop_alphas, pop_fitnesses = pop_spread(
+        offspring, actor, sample_size=100, sigma=sigma, EM=EM, injection=injection
+    )
+    # ax.scatter(pop_alphas, pop_fitnesses, label="Population fitness")
+    ax.axvline(x=0, color="red")
+    ax.axvline(x=1, color="green")
+    ax.legend()
+    ax.set_xlabel("Alpha")
+    ax.set_ylabel("Fitness")
+    title = f"Fitness landscape | Population distribution"
+    ax.set_title(title)
+    # config_string = config.replace("| ", "_").replace(" ", "_") + "_fitness"
+    config_string = f"stability_gen_{gen}"
+    if injection:
+        config_string += "_injection"
+    config_string += "_fitness"
+    plt.savefig(f"{save_path}/stability_{config_string}.png")
+
+    # Fitness plot
+    # fig, ax = plt.subplots(1, 1, figsize=(20, 10))
+    # ax.plot(alphas, results["parent_min"], c="red")
+    # ax.scatter(alphas, results["parent_min"], c="red", label="Parent min fitness")
+    # ax.plot(alphas, results["parent_median"], c="blue")
+    # ax.scatter(
+    #     alphas, results["parent_median"], c="blue", label="Parent median fitness"
+    # )
+    # ax.plot(alphas, results["parent_max"], c="green")
+    # ax.scatter(alphas, results["parent_max"], c="green", label="Parent max fitness")
+    # ax.axvline(x=0, color="red")
+    # ax.axvline(x=1, color="green")
+    # ax.legend()
+    # ax.set_xlabel("Alpha")
+    # ax.set_ylabel("Fitness")
+    # title = f"Parent fitness distribution"
+    # ax.set_title(title)
+    # config_string = config.replace("| ", "_").replace(" ", "_") + "_parent"
+    # plt.savefig(f"{save_path}/stability_{config_string}.png")
+
+    # Noise
+    # fig, ax = plt.subplots(1, 1, figsize=(20, 10))
+    # ax.plot(alphas, results["parent_std"], c="red")
+    # ax.scatter(alphas, results["parent_std"], c="red", label="Parent fitness std")
+    # ax.axvline(x=0, color="red")
+    # ax.axvline(x=1, color="green")
+    # ax.legend()
+    # ax.set_xlabel("Alpha")
+    # ax.set_ylabel("Fitness")
+    # title = f"Fitness noise on center"
+    # ax.set_title(title)
+    # config_string = config.replace("| ", "_").replace(" ", "_") + "_noise"
+    # plt.savefig(f"{save_path}/stability_{config_string}.png")
+
+    # Population fitness plot
+    fig, ax = plt.subplots(1, 1, figsize=(20, 10))
+    ax.plot(alphas, results["fit_min"], c="red")
+    ax.scatter(alphas, results["fit_min"], c="red", label="Pop min fitness")
+    ax.plot(alphas, results["fit_median"], c="blue")
+    ax.scatter(alphas, results["fit_median"], c="blue", label="Pop median fitness")
+    ax.plot(alphas, results["fit_max"], c="green")
+    ax.scatter(alphas, results["fit_max"], c="green", label="Pop max fitness")
+    ax.axvline(x=0, color="red")
+    ax.axvline(x=1, color="green")
+    ax.legend()
+    ax.set_xlabel("Alpha")
+    ax.set_ylabel("Fitness")
+    title = f"Population fitness std"
+    ax.set_title(title)
+    # config_string = config.replace("| ", "_").replace(" ", "_") + "_pop"
+    config_string = f"stability_gen_{gen}"
+    if injection:
+        config_string += "_injection"
+    config_string += "_pop"
+    plt.savefig(f"{save_path}/stability_{config_string}.png")
+
+
 if __name__ == "__main__":
     # parse first cli argument
     parser = argparse.ArgumentParser()
@@ -567,4 +701,5 @@ if __name__ == "__main__":
     sigma = args.es_sigma
 
     for injection in [True, False]:
-        stability_plot(save_path, gen, sigma, injection)
+        # stability_plot(save_path, gen, sigma, injection)
+        stability_subplots(save_path, gen, sigma, injection)
