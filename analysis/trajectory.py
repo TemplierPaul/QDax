@@ -172,7 +172,7 @@ class PathPCA:
             contour = axes[0].contourf(
                 x_grid, y_grid, z_grid, 20, cmap="viridis", alpha=0.5
             )
-            fig.colorbar(contour, location="left", use_gridspec=True)
+            fig.colorbar(contour, location="right", use_gridspec=True)
         colors = ["r", "g", "y", "m", "c", "k"]
         colors = ["orange", "grey"]
         for p, c in zip(self.paths, colors):
@@ -182,6 +182,8 @@ class PathPCA:
             axes[1].plot(gens, fit, label=p.name, c=c)[0]
             # x_axis max
             axes[1].set_xlim(0, max(p.gens))
+            # y_axis max
+            axes[1].set_ylim(0, 5500)
         # Start point
         axes[0].scatter(p.projected[0, 0], p.projected[0, 1], c="r", label="Start")
         axes[0].legend()
@@ -193,7 +195,7 @@ class PathPCA:
         axes[1].set_title("Fitness")
 
         if save is not None:
-            plt.savefig(save)
+            plt.savefig(save, dpi=300, bbox_inches="tight")
 
     def plot_3d(self, save=None):
         if self.samples is not None:
@@ -463,17 +465,38 @@ class StepPathPCA(PathPCA):
 
 
 if __name__ == "__main__":
+    import matplotlib as mpl
+
+    font_size = 20
+    mpl_params = {
+        "axes.labelsize": font_size,
+        "axes.titlesize": font_size,
+        "legend.fontsize": font_size,
+        "xtick.labelsize": font_size,
+        "ytick.labelsize": font_size,
+        "font.size": font_size,
+        "text.usetex": False,
+        "axes.titlepad": 10,
+    }
+    mpl.rcParams.update(mpl_params)
+
+
     # parse first cli argument
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "save_path", type=str, help="Path to the folder containing the config.json"
     )
-    parser.add_argument("--max_gens", type=int, default=1000)
+    # parser.add_argument("--max_gens", type=int, default=1000)
+    # make max_gens a list
+    parser.add_argument("--max_gens", nargs="+", type=int, default=[1000])
     # arg dx: float = 0.5
     parser.add_argument("--dx", type=float, default=0.5, help="dx")
     plot_args = parser.parse_args()
     save_path = plot_args.save_path
     print(plot_args)
+
+    if 0 in plot_args.max_gens:
+        raise ValueError("max_gens should be > 0")
 
     # Load config
     print(save_path + "/config.json")
@@ -559,13 +582,14 @@ if __name__ == "__main__":
         # 3D
         # save = save_path + f"/3dpath_{'_'.join([p.name for p in pca.paths])}.html"
         # pca.plot_3d(save=save)
-
-        # 2D
-        save = (
-            save_path
-            + f"/2dpath_{'_'.join([p.name for p in pca.paths])}_{plot_args.max_gens}.png"
-        )
-        pca.plot(save=save, max_gen=plot_args.max_gens)
+        for max_gens in plot_args.max_gens:
+            print(f"Plotting {max_gens}")
+            # 2D
+            save = (
+                save_path
+                + f"/2dpath_{'_'.join([p.name for p in pca.paths])}_{max_gens}.png"
+            )
+            pca.plot(save=save, max_gen=max_gens)
 
         # GIF
         # save = save_path + f"/animated_path_{'_'.join([p.name for p in pca.paths])}.gif"
